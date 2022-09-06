@@ -313,35 +313,18 @@ impl MusicApi {
     /// 登录状态
     #[allow(unused)]
     pub async fn login_status(&self) -> Result<LoginInfo> {
+        let path = "/api/nuser/account/get";
         let result = self
-            .request(Method::Get, "", HashMap::new(), CryptoApi::Weapi, "", true)
+            .request(
+                Method::Post,
+                path,
+                HashMap::new(),
+                CryptoApi::Weapi,
+                "",
+                true,
+            )
             .await?;
-        let re = regex::Regex::new(
-            r#"userId:(?P<id>\d+),nickname:"(?P<nickname>\w+)",avatarUrl.+?(?P<avatar_url>http.+?jpg)""#,
-        )?;
-        let cap = re.captures(&result).ok_or_else(|| anyhow!("none"))?;
-        let uid = cap
-            .name("id")
-            .ok_or_else(|| anyhow!("none"))?
-            .as_str()
-            .parse::<u64>()?;
-        let nickname = cap
-            .name("nickname")
-            .ok_or_else(|| anyhow!("none"))?
-            .as_str()
-            .to_owned();
-        let avatar_url = cap
-            .name("avatar_url")
-            .ok_or_else(|| anyhow!("none"))?
-            .as_str()
-            .to_owned();
-        Ok(LoginInfo {
-            code: 200,
-            uid,
-            nickname,
-            avatar_url,
-            msg: "已登录.".to_owned(),
-        })
+        to_login_info(result)
     }
 
     /// 退出
