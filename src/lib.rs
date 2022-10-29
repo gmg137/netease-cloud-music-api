@@ -7,7 +7,7 @@ mod encrypt;
 pub(crate) mod model;
 use anyhow::{anyhow, Result};
 use encrypt::Crypto;
-pub use isahc::cookies::CookieJar;
+pub use isahc::cookies::{CookieBuilder, CookieJar};
 use isahc::{prelude::*, *};
 use lazy_static::lazy_static;
 pub use model::*;
