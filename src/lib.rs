@@ -354,6 +354,20 @@ impl MusicApi {
         to_msg(result)
     }
 
+    /// 用户喜欢音乐id列表
+    /// uid: 用户id
+    #[allow(unused)]
+    pub async fn user_song_id_list(&self, uid: u64) -> Result<Vec<u64>> {
+        let path = "/weapi/song/like/get";
+        let mut params = HashMap::new();
+        let uid = uid.to_string();
+        params.insert("uid", uid.as_str());
+        let result = self
+            .request(Method::Post, path, params, CryptoApi::Weapi, "", true)
+            .await?;
+        to_song_id_list(result)
+    }
+
     /// 用户歌单
     /// uid: 用户id
     /// offset: 列表起点号
@@ -728,6 +742,34 @@ impl MusicApi {
             )
             .await?;
         to_song_info(result, Parse::Album)
+    }
+
+    /// 歌单动态信息
+    /// songlist_id: 歌单 id
+    #[allow(unused)]
+    pub async fn songlist_detail_dynamic(&self, songlist_id: u64) -> Result<SongListDetailDynamic> {
+        let path = "/weapi/playlist/detail/dynamic";
+        let mut params = HashMap::new();
+        let id = songlist_id.to_string();
+        params.insert("id", &id[..]);
+        let result = self
+            .request(Method::Post, &path, params, CryptoApi::Weapi, "", true)
+            .await?;
+        to_songlist_detail_dynamic(result)
+    }
+
+    /// 专辑动态信息
+    /// album_id: 专辑 id
+    #[allow(unused)]
+    pub async fn album_detail_dynamic(&self, album_id: u64) -> Result<AlbumDetailDynamic> {
+        let path = "/weapi/album/detail/dynamic";
+        let mut params = HashMap::new();
+        let id = album_id.to_string();
+        params.insert("id", &id[..]);
+        let result = self
+            .request(Method::Post, &path, params, CryptoApi::Weapi, "", true)
+            .await?;
+        to_album_detail_dynamic(result)
     }
 
     /// 热门推荐歌单
