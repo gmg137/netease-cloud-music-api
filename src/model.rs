@@ -864,6 +864,23 @@ pub fn to_song_list(json: String, parse: Parse) -> Result<Vec<SongList>> {
     Err(anyhow!("none"))
 }
 
+#[allow(unused)]
+pub fn to_song_id_list(json: String) -> Result<Vec<u64>> {
+    let value = serde_json::from_str::<Value>(&json)?;
+    if value.get("code").ok_or_else(|| anyhow!("none"))?.eq(&200) {
+        let id_array = value
+            .get("ids")
+            .ok_or_else(|| anyhow!("none"))?
+            .as_array()
+            .ok_or_else(|| anyhow!("none"))?;
+        return id_array
+            .iter()
+            .map(|id| id.as_u64().ok_or_else(|| anyhow!("none")))
+            .collect();
+    }
+    Err(anyhow!("none"))
+}
+
 /// 消息
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Msg {
@@ -1217,6 +1234,93 @@ pub fn to_toplist(json: String) -> Result<Vec<TopList>> {
         return Ok(toplist);
     }
     Err(anyhow!("get toplist err!"))
+}
+
+
+#[derive(Debug, Clone)]
+pub enum DetailDynamic {
+    SongList(SongListDetailDynamic),
+    Album(AlbumDetailDynamic),
+}
+
+/// 歌单详情动态
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
+pub struct SongListDetailDynamic {
+    pub subscribed: bool,
+    pub booked_count: u64,
+    pub play_count: u64,
+    pub comment_count: u64,
+}
+
+#[allow(unused)]
+pub fn to_songlist_detail_dynamic(json: String) -> Result<SongListDetailDynamic> {
+    let value = serde_json::from_str::<Value>(&json)?;
+    if value
+        .get("code")
+        .ok_or_else(|| anyhow!("none"))?
+        .eq(&200i32)
+    {
+        return Ok(SongListDetailDynamic {
+            subscribed: value
+                .get("subscribed")
+                .ok_or_else(|| anyhow!("none"))?
+                .as_bool()
+                .ok_or_else(|| anyhow!("none"))?,
+            booked_count: value
+                .get("bookedCount")
+                .ok_or_else(|| anyhow!("none"))?
+                .as_u64()
+                .ok_or_else(|| anyhow!("none"))?,
+            play_count: value
+                .get("playCount")
+                .ok_or_else(|| anyhow!("none"))?
+                .as_u64()
+                .ok_or_else(|| anyhow!("none"))?,
+            comment_count: value
+                .get("commentCount")
+                .ok_or_else(|| anyhow!("none"))?
+                .as_u64()
+                .ok_or_else(|| anyhow!("none"))?,
+        });
+    }
+    Err(anyhow!("get songlist detail dynamic err!"))
+}
+
+/// 专辑详情动态
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
+pub struct AlbumDetailDynamic {
+    pub is_sub: bool,
+    pub sub_count: u64,
+    pub comment_count: u64,
+}
+
+#[allow(unused)]
+pub fn to_album_detail_dynamic(json: String) -> Result<AlbumDetailDynamic> {
+    let value = serde_json::from_str::<Value>(&json)?;
+    if value
+        .get("code")
+        .ok_or_else(|| anyhow!("none"))?
+        .eq(&200i32)
+    {
+        return Ok(AlbumDetailDynamic {
+            is_sub: value
+                .get("isSub")
+                .ok_or_else(|| anyhow!("none"))?
+                .as_bool()
+                .ok_or_else(|| anyhow!("none"))?,
+            sub_count: value
+                .get("subCount")
+                .ok_or_else(|| anyhow!("none"))?
+                .as_u64()
+                .ok_or_else(|| anyhow!("none"))?,
+            comment_count: value
+                .get("commentCount")
+                .ok_or_else(|| anyhow!("none"))?
+                .as_u64()
+                .ok_or_else(|| anyhow!("none"))?,
+        });
+    }
+    Err(anyhow!("get album detail dynamic err!"))
 }
 
 /// 请求方式
