@@ -1013,6 +1013,8 @@ pub struct BannersInfo {
     pub singer: String,
     /// 专辑
     pub album: String,
+    /// 专辑ID
+    pub album_id: u64,
     /// 专辑封面
     pub pic_url: String,
     /// 时长
@@ -1099,6 +1101,13 @@ pub fn to_banners_info(json: String) -> Result<Vec<BannersInfo>> {
                                     .as_str()
                                     .ok_or_else(|| anyhow!("none"))?
                                     .to_owned(),
+                                album_id: song
+                                    .get("al")
+                                    .ok_or_else(|| anyhow!("none"))?
+                                    .get("id")
+                                    .ok_or_else(|| anyhow!("none"))?
+                                    .as_u64()
+                                    .ok_or_else(|| anyhow!("none"))?,
                                 pic_url: song
                                     .get("al")
                                     .ok_or_else(|| anyhow!("none"))?
@@ -1235,7 +1244,6 @@ pub fn to_toplist(json: String) -> Result<Vec<TopList>> {
     }
     Err(anyhow!("get toplist err!"))
 }
-
 
 #[derive(Debug, Clone)]
 pub enum DetailDynamic {
