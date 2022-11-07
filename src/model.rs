@@ -648,6 +648,8 @@ pub struct SongList {
     pub name: String,
     /// 歌单封面
     pub cover_img_url: String,
+
+    pub author: String,
 }
 
 /// parse: 解析方式
@@ -682,6 +684,14 @@ pub fn to_song_list(json: String, parse: Parse) -> Result<Vec<SongList>> {
                             .as_str()
                             .ok_or_else(|| anyhow!("none"))?
                             .to_owned(),
+                        author: v
+                            .get("creator")
+                            .ok_or_else(|| anyhow!("none"))?
+                            .get("nickname")
+                            .ok_or_else(|| anyhow!("none"))?
+                            .as_str()
+                            .ok_or_else(|| anyhow!("none"))?
+                            .to_owned(),
                     });
                 }
             }
@@ -709,6 +719,14 @@ pub fn to_song_list(json: String, parse: Parse) -> Result<Vec<SongList>> {
                             .unwrap_or(&json!(""))
                             .as_str()
                             .unwrap_or("")
+                            .to_owned(),
+                        author: v
+                            .get("creator")
+                            .ok_or_else(|| anyhow!("none"))?
+                            .get("nickname")
+                            .ok_or_else(|| anyhow!("none"))?
+                            .as_str()
+                            .ok_or_else(|| anyhow!("none"))?
                             .to_owned(),
                     });
                 }
@@ -738,6 +756,14 @@ pub fn to_song_list(json: String, parse: Parse) -> Result<Vec<SongList>> {
                             .as_str()
                             .unwrap_or("")
                             .to_owned(),
+                        author: v
+                            .get("artist")
+                            .ok_or_else(|| anyhow!("none"))?
+                            .get("name")
+                            .ok_or_else(|| anyhow!("none"))?
+                            .as_str()
+                            .ok_or_else(|| anyhow!("none"))?
+                            .to_owned(),
                     });
                 }
             }
@@ -762,6 +788,14 @@ pub fn to_song_list(json: String, parse: Parse) -> Result<Vec<SongList>> {
                             .to_owned(),
                         cover_img_url: v
                             .get("coverImgUrl")
+                            .ok_or_else(|| anyhow!("none"))?
+                            .as_str()
+                            .ok_or_else(|| anyhow!("none"))?
+                            .to_owned(),
+                        author: v
+                            .get("creator")
+                            .ok_or_else(|| anyhow!("none"))?
+                            .get("nickname")
                             .ok_or_else(|| anyhow!("none"))?
                             .as_str()
                             .ok_or_else(|| anyhow!("none"))?
@@ -796,6 +830,14 @@ pub fn to_song_list(json: String, parse: Parse) -> Result<Vec<SongList>> {
                             .as_str()
                             .ok_or_else(|| anyhow!("none"))?
                             .to_owned(),
+                        author: v
+                            .get("creator")
+                            .ok_or_else(|| anyhow!("none"))?
+                            .get("nickname")
+                            .ok_or_else(|| anyhow!("none"))?
+                            .as_str()
+                            .ok_or_else(|| anyhow!("none"))?
+                            .to_owned(),
                     });
                 }
             }
@@ -822,6 +864,14 @@ pub fn to_song_list(json: String, parse: Parse) -> Result<Vec<SongList>> {
                             .to_owned(),
                         cover_img_url: v
                             .get("picUrl")
+                            .ok_or_else(|| anyhow!("none"))?
+                            .as_str()
+                            .ok_or_else(|| anyhow!("none"))?
+                            .to_owned(),
+                        author: v
+                            .get("artist")
+                            .ok_or_else(|| anyhow!("none"))?
+                            .get("name")
                             .ok_or_else(|| anyhow!("none"))?
                             .as_str()
                             .ok_or_else(|| anyhow!("none"))?
@@ -854,6 +904,17 @@ pub fn to_song_list(json: String, parse: Parse) -> Result<Vec<SongList>> {
                             .as_str()
                             .ok_or_else(|| anyhow!("none"))?
                             .to_owned(),
+                        author: v
+                            .get("artists")
+                            .ok_or_else(|| anyhow!("none"))?
+                            .get(0)
+                            .map_or(Ok(String::new()), |v: &Value| -> Result<String> {
+                                Ok(v.get("name")
+                                    .ok_or_else(|| anyhow!("none"))?
+                                    .as_str()
+                                    .ok_or_else(|| anyhow!("none"))?
+                                    .to_owned())
+                            })?,
                     });
                 }
             }
