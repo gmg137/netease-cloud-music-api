@@ -21,6 +21,8 @@ lazy_static! {
 
 static BASE_URL: &str = "https://music.163.com";
 
+const TIMEOUT: u64 = 100;
+
 const LINUX_USER_AGNET: &str =
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3112.90 Safari/537.36";
 
@@ -63,7 +65,7 @@ impl MusicApi {
     #[allow(unused)]
     pub fn new() -> Self {
         let client = HttpClient::builder()
-            .timeout(Duration::from_secs(20))
+            .timeout(Duration::from_secs(TIMEOUT))
             .cookies()
             .build()
             .expect("初始化网络请求失败!");
@@ -76,7 +78,7 @@ impl MusicApi {
     #[allow(unused)]
     pub fn from_cookie_jar(cookie_jar: CookieJar) -> Self {
         let client = HttpClient::builder()
-            .timeout(Duration::from_secs(20))
+            .timeout(Duration::from_secs(TIMEOUT))
             .cookies()
             .cookie_jar(cookie_jar)
             .build()
@@ -103,7 +105,7 @@ impl MusicApi {
     pub fn set_proxy(&mut self, proxy: &str) -> Result<()> {
         if let Some(cookie_jar) = self.client.cookie_jar() {
             let client = HttpClient::builder()
-                .timeout(Duration::from_secs(20))
+                .timeout(Duration::from_secs(TIMEOUT))
                 .proxy(Some(proxy.parse()?))
                 .cookie_jar(cookie_jar.to_owned())
                 .cookies()
@@ -112,7 +114,7 @@ impl MusicApi {
             self.client = client;
         } else {
             let client = HttpClient::builder()
-                .timeout(Duration::from_secs(20))
+                .timeout(Duration::from_secs(TIMEOUT))
                 .proxy(Some(proxy.parse()?))
                 .cookies()
                 .build()
@@ -753,7 +755,7 @@ impl MusicApi {
         let id = songlist_id.to_string();
         params.insert("id", &id[..]);
         let result = self
-            .request(Method::Post, &path, params, CryptoApi::Weapi, "", true)
+            .request(Method::Post, path, params, CryptoApi::Weapi, "", true)
             .await?;
         to_songlist_detail_dynamic(result)
     }
@@ -767,7 +769,7 @@ impl MusicApi {
         let id = album_id.to_string();
         params.insert("id", &id[..]);
         let result = self
-            .request(Method::Post, &path, params, CryptoApi::Weapi, "", true)
+            .request(Method::Post, path, params, CryptoApi::Weapi, "", true)
             .await?;
         to_album_detail_dynamic(result)
     }
