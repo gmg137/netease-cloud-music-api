@@ -3,28 +3,87 @@
 // Copyright (C) 2019 gmg137 <gmg137@live.com>
 // Distributed under terms of the GPLv3 license.
 //
-use anyhow::{anyhow, Ok, Result};
+use anyhow::{anyhow, Context, Ok, Result};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::fmt;
+
+trait DeVal<'a>: Sized {
+    fn dval(v: &'a Value) -> Result<Self>;
+}
+
+impl<'a> DeVal<'a> for bool {
+    fn dval(v: &Value) -> Result<Self> {
+        Ok(Self::deserialize(v)?)
+    }
+}
+
+impl<'a> DeVal<'a> for i64 {
+    fn dval(v: &Value) -> Result<Self> {
+        Ok(Self::deserialize(v)?)
+    }
+}
+
+impl<'a> DeVal<'a> for u64 {
+    fn dval(v: &Value) -> Result<Self> {
+        Ok(Self::deserialize(v)?)
+    }
+}
+
+impl<'a> DeVal<'a> for i32 {
+    fn dval(v: &Value) -> Result<Self> {
+        Ok(Self::deserialize(v)?)
+    }
+}
+
+impl<'a> DeVal<'a> for u32 {
+    fn dval(v: &Value) -> Result<Self> {
+        Ok(Self::deserialize(v)?)
+    }
+}
+
+impl<'a> DeVal<'a> for String {
+    fn dval(v: &Value) -> Result<Self> {
+        Ok(Self::deserialize(v)?)
+    }
+}
+
+impl<'a> DeVal<'a> for &'a Vec<Value> {
+    fn dval(v: &'a Value) -> Result<Self> {
+        match v {
+            Value::Array(v) => Ok(v),
+            _ => Err(anyhow!("json not a array")),
+        }
+    }
+}
+
+fn get_val_chain<'a, T>(v: &'a Value, names: &[&str]) -> Result<T>
+where
+    T: DeVal<'a>,
+{
+    let v = names.iter().fold(Ok(v), |v, n| {
+        v?.get(n)
+            .ok_or(anyhow!("key '{}' not found, in chain {:?}", n, names))
+    })?;
+    Ok(T::dval(v)?)
+}
+
+macro_rules! get_val {
+    (@as $t:ty, $v:expr, $($n:expr),+) => {
+        get_val_chain::<$t>($v, &[$($n),+]).context(format!("at {}:{}", file!(), line!()))
+    };
+    ($v:expr, $($n:expr),+) => {
+        get_val_chain($v, &[$($n),+]).context(format!("at {}:{}", file!(), line!()))
+    };
+}
 
 #[allow(unused)]
 pub fn to_lyric(json: String) -> Result<Vec<String>> {
-    let value = serde_json::from_str::<Value>(&json)?;
-    if value
-        .get("code")
-        .ok_or_else(|| anyhow!("none"))?
-        .eq(&json!(200i32))
-    {
+    let value = &serde_json::from_str::<Value>(&json)?;
+    let code: i64 = get_val!(value, "code")?;
+    if code == 200 {
         let mut vec: Vec<String> = Vec::new();
-        let lyric = value
-            .get("lrc")
-            .ok_or_else(|| anyhow!("none"))?
-            .get("lyric")
-            .ok_or_else(|| anyhow!("none"))?
-            .as_str()
-            .ok_or_else(|| anyhow!("none"))?
-            .to_owned();
+        let lyric: String = get_val!(value, "lrc", "lyric")?;
         vec = lyric
             .split('\n')
             .collect::<Vec<&str>>()
@@ -50,42 +109,19 @@ pub struct SingerInfo {
 
 #[allow(unused)]
 pub fn to_singer_info(json: String) -> Result<Vec<SingerInfo>> {
-    let value = serde_json::from_str::<Value>(&json)?;
-    if value
-        .get("code")
-        .ok_or_else(|| anyhow!("none"))?
-        .eq(&json!(200i32))
-    {
+    let value = &serde_json::from_str::<Value>(&json)?;
+    let code: i64 = get_val!(value, "code")?;
+    if code == 200 {
         let mut vec: Vec<SingerInfo> = Vec::new();
-        let array = value
-            .get("result")
-            .ok_or_else(|| anyhow!("none"))?
-            .get("artists")
-            .ok_or_else(|| anyhow!("none"))?
-            .as_array()
-            .ok_or_else(|| anyhow!("none"))?;
+        let array: &Vec<Value> = get_val!(value, "result", "artists")?;
         for v in array.iter() {
-            let mut pic_url = v
-                .get("img1v1Url")
-                .unwrap_or(&json!(""))
-                .as_str()
-                .unwrap_or("")
-                .to_owned();
+            let mut pic_url: String = get_val!(v, "img1v1Url").unwrap_or(String::new());
             if pic_url.ends_with("5639395138885805.jpg") {
                 pic_url = "".to_owned();
             }
             vec.push(SingerInfo {
-                id: v
-                    .get("id")
-                    .ok_or_else(|| anyhow!("none"))?
-                    .as_u64()
-                    .ok_or_else(|| anyhow!("none"))? as u64,
-                name: v
-                    .get("name")
-                    .ok_or_else(|| anyhow!("none"))?
-                    .as_str()
-                    .ok_or_else(|| anyhow!("none"))?
-                    .to_owned(),
+                id: get_val!(v, "id")?,
+                name: get_val!(v, "name")?,
                 pic_url,
             });
         }
@@ -107,34 +143,18 @@ pub struct SongUrl {
 
 #[allow(unused)]
 pub fn to_song_url(json: String) -> Result<Vec<SongUrl>> {
-    let value = serde_json::from_str::<Value>(&json)?;
-    if value.get("code").ok_or_else(|| anyhow!("none"))?.eq(&200) {
+    let value = &serde_json::from_str::<Value>(&json)?;
+    let code: i64 = get_val!(value, "code")?;
+    if code == 200 {
         let mut vec: Vec<SongUrl> = Vec::new();
-        let array = value
-            .get("data")
-            .ok_or_else(|| anyhow!("none"))?
-            .as_array()
-            .ok_or_else(|| anyhow!("none"))?;
+        let array: &Vec<Value> = get_val!(value, "data")?;
         for v in array.iter() {
-            let url = v
-                .get("url")
-                .unwrap_or(&json!(""))
-                .as_str()
-                .unwrap_or("")
-                .to_owned();
+            let url = get_val!(v, "url").unwrap_or(String::new());
             if !url.is_empty() {
                 vec.push(SongUrl {
-                    id: v
-                        .get("id")
-                        .ok_or_else(|| anyhow!("none"))?
-                        .as_u64()
-                        .ok_or_else(|| anyhow!("none"))? as u64,
+                    id: get_val!(v, "id")?,
                     url,
-                    rate: v
-                        .get("br")
-                        .ok_or_else(|| anyhow!("none"))?
-                        .as_u64()
-                        .ok_or_else(|| anyhow!("none"))? as u32,
+                    rate: get_val!(v, "br")?,
                 });
             }
         }
@@ -173,77 +193,33 @@ impl PartialEq for SongInfo {
 /// parse: 解析方式
 #[allow(unused)]
 pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
-    let value = serde_json::from_str::<Value>(&json)?;
-    if value.get("code").ok_or_else(|| anyhow!("none"))?.eq(&200) {
+    let value = &serde_json::from_str::<Value>(&json)?;
+    let code: i64 = get_val!(value, "code")?;
+
+    let unk = "unknown".to_string();
+    if code == 200 {
         let mut vec: Vec<SongInfo> = Vec::new();
-        let list = json!([]);
+        let list = vec![];
         match parse {
             Parse::Usl => {
-                let mut array = value
-                    .get("songs")
-                    .unwrap_or(&list)
-                    .as_array()
-                    .ok_or_else(|| anyhow!("none"))?;
+                let mut array: &Vec<Value> = get_val!(value, "songs").unwrap_or(&list);
                 if array.is_empty() {
-                    array = value
-                        .get("playlist")
-                        .ok_or_else(|| anyhow!("none"))?
-                        .get("tracks")
-                        .ok_or_else(|| anyhow!("none"))?
-                        .as_array()
-                        .ok_or_else(|| anyhow!("none"))?;
+                    array = get_val!(value, "playlist", "tracks")?;
                 }
                 for v in array.iter() {
-                    let duration = v
-                        .get("dt")
-                        .ok_or_else(|| anyhow!("none"))?
-                        .as_u64()
-                        .ok_or_else(|| anyhow!("none"))? as u32;
+                    let duration: u32 = get_val!(v, "dt")?;
+                    let ar: &Vec<Value> = get_val!(v, "ar")?;
+
                     vec.push(SongInfo {
-                        id: v
-                            .get("id")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_u64()
-                            .ok_or_else(|| anyhow!("none"))?,
-                        name: v
-                            .get("name")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_str()
-                            .ok_or_else(|| anyhow!("none"))?
-                            .to_owned(),
-                        singer: v
-                            .get("ar")
-                            .ok_or_else(|| anyhow!("none"))?
+                        id: get_val!(v, "id")?,
+                        name: get_val!(v, "name")?,
+                        singer: get_val!(@as &Vec<Value>, v, "ar")?
                             .get(0)
-                            .ok_or_else(|| anyhow!("none"))?
-                            .get("name")
-                            .unwrap_or(&json!("未知"))
-                            .as_str()
-                            .unwrap_or("未知")
-                            .to_owned(),
-                        album: v
-                            .get("al")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .get("name")
-                            .unwrap_or(&json!("未知"))
-                            .as_str()
-                            .unwrap_or("未知")
-                            .to_owned(),
-                        album_id: v
-                            .get("al")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .get("id")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_u64()
-                            .ok_or_else(|| anyhow!("none"))?,
-                        pic_url: v
-                            .get("al")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .get("picUrl")
-                            .unwrap_or(&json!(""))
-                            .as_str()
-                            .unwrap_or("")
-                            .to_owned(),
+                            .map(|v: &Value| get_val!(v, "name").unwrap_or(unk.clone()))
+                            .unwrap_or(unk.clone()),
+                        album: get_val!(v, "al", "name").unwrap_or(unk.clone()),
+                        album_id: get_val!(v, "al", "id")?,
+                        pic_url: get_val!(v, "al", "picUrl").unwrap_or(String::new()),
                         duration: format!(
                             "{:0>2}:{:0>2}",
                             duration / 1000 / 60,
@@ -254,43 +230,14 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                 }
             }
             Parse::Ucd => {
-                let array = value
-                    .get("data")
-                    .ok_or_else(|| anyhow!("none"))?
-                    .as_array()
-                    .ok_or_else(|| anyhow!("none"))?;
+                let array: &Vec<Value> = get_val!(value, "data")?;
                 for v in array.iter() {
-                    let duration = v
-                        .get("simpleSong")
-                        .ok_or_else(|| anyhow!("none"))?
-                        .get("dt")
-                        .ok_or_else(|| anyhow!("none"))?
-                        .as_u64()
-                        .ok_or_else(|| anyhow!("none"))? as u32;
+                    let duration: u32 = get_val!(v, "simpleSong", "dt")?;
                     vec.push(SongInfo {
-                        id: v
-                            .get("songId")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_u64()
-                            .ok_or_else(|| anyhow!("none"))? as u64,
-                        name: v
-                            .get("songName")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_str()
-                            .ok_or_else(|| anyhow!("none"))?
-                            .to_owned(),
-                        singer: v
-                            .get("artist")
-                            .unwrap_or(&json!("未知"))
-                            .as_str()
-                            .unwrap_or("未知")
-                            .to_owned(),
-                        album: v
-                            .get("album")
-                            .unwrap_or(&json!("未知"))
-                            .as_str()
-                            .unwrap_or("未知")
-                            .to_owned(),
+                        id: get_val!(v, "songId")?,
+                        name: get_val!(v, "songName")?,
+                        singer: get_val!(v, "artist").unwrap_or(unk.clone()),
+                        album: get_val!(v, "album").unwrap_or(unk.clone()),
                         album_id: 0,
                         pic_url: String::new(),
                         duration: format!(
@@ -303,62 +250,19 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                 }
             }
             Parse::Rmd => {
-                let array = value
-                    .get("data")
-                    .ok_or_else(|| anyhow!("none"))?
-                    .as_array()
-                    .ok_or_else(|| anyhow!("none"))?;
+                let array: &Vec<Value> = get_val!(value, "data")?;
                 for v in array.iter() {
-                    let duration = v
-                        .get("duration")
-                        .ok_or_else(|| anyhow!("none"))?
-                        .as_u64()
-                        .ok_or_else(|| anyhow!("none"))? as u32;
+                    let duration: u32 = get_val!(v, "duration")?;
                     vec.push(SongInfo {
-                        id: v
-                            .get("id")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_u64()
-                            .ok_or_else(|| anyhow!("none"))? as u64,
-                        name: v
-                            .get("name")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_str()
-                            .ok_or_else(|| anyhow!("none"))?
-                            .to_owned(),
-                        singer: v
-                            .get("artists")
-                            .ok_or_else(|| anyhow!("none"))?
+                        id: get_val!(v, "id")?,
+                        name: get_val!(v, "name")?,
+                        singer: get_val!(@as &Vec<Value>, v, "artists")?
                             .get(0)
-                            .ok_or_else(|| anyhow!("none"))?
-                            .get("name")
-                            .unwrap_or(&json!("未知"))
-                            .as_str()
-                            .unwrap_or("未知")
-                            .to_owned(),
-                        album: v
-                            .get("album")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .get("name")
-                            .unwrap_or(&json!("未知"))
-                            .as_str()
-                            .unwrap_or("未知")
-                            .to_owned(),
-                        album_id: v
-                            .get("album")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .get("id")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_u64()
-                            .ok_or_else(|| anyhow!("none"))?,
-                        pic_url: v
-                            .get("album")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .get("picUrl")
-                            .unwrap_or(&json!(""))
-                            .as_str()
-                            .unwrap_or("")
-                            .to_owned(),
+                            .map(|v: &Value| get_val!(v, "name").unwrap_or(unk.clone()))
+                            .unwrap_or(unk.clone()),
+                        album: get_val!(v, "album", "name").unwrap_or(unk.clone()),
+                        album_id: get_val!(v, "album", "id")?,
+                        pic_url: get_val!(v, "album", "picUrl").unwrap_or(String::new()),
                         duration: format!(
                             "{:0>2}:{:0>2}",
                             duration / 1000 / 60,
@@ -369,66 +273,19 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                 }
             }
             Parse::Rmds => {
-                let array = value
-                    .get("data")
-                    .ok_or_else(|| anyhow!("none"))?
-                    .as_object()
-                    .ok_or_else(|| anyhow!("none"))?
-                    .get("dailySongs")
-                    .ok_or_else(|| anyhow!("none"))?
-                    .as_array()
-                    .ok_or_else(|| anyhow!("none"))?;
+                let array: &Vec<Value> = get_val!(value, "data", "dailySongs")?;
                 for v in array.iter() {
-                    let duration = v
-                        .get("duration")
-                        .ok_or_else(|| anyhow!("none"))?
-                        .as_u64()
-                        .ok_or_else(|| anyhow!("none"))? as u32;
+                    let duration: u32 = get_val!(v, "duration")?;
                     vec.push(SongInfo {
-                        id: v
-                            .get("id")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_u64()
-                            .ok_or_else(|| anyhow!("none"))? as u64,
-                        name: v
-                            .get("name")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_str()
-                            .ok_or_else(|| anyhow!("none"))?
-                            .to_owned(),
-                        singer: v
-                            .get("artists")
-                            .ok_or_else(|| anyhow!("none"))?
+                        id: get_val!(v, "id")?,
+                        name: get_val!(v, "name")?,
+                        singer: get_val!(@as &Vec<Value>, v, "artists")?
                             .get(0)
-                            .ok_or_else(|| anyhow!("none"))?
-                            .get("name")
-                            .unwrap_or(&json!("未知"))
-                            .as_str()
-                            .unwrap_or("未知")
-                            .to_owned(),
-                        album: v
-                            .get("album")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .get("name")
-                            .unwrap_or(&json!("未知"))
-                            .as_str()
-                            .unwrap_or("未知")
-                            .to_owned(),
-                        album_id: v
-                            .get("album")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .get("id")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_u64()
-                            .ok_or_else(|| anyhow!("none"))?,
-                        pic_url: v
-                            .get("album")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .get("picUrl")
-                            .unwrap_or(&json!(""))
-                            .as_str()
-                            .unwrap_or("")
-                            .to_owned(),
+                            .map(|v: &Value| get_val!(v, "name").unwrap_or(unk.clone()))
+                            .unwrap_or(unk.clone()),
+                        album: get_val!(v, "album", "name").unwrap_or(unk.clone()),
+                        album_id: get_val!(v, "album", "id")?,
+                        pic_url: get_val!(v, "album", "picUrl").unwrap_or(String::new()),
                         duration: format!(
                             "{:0>2}:{:0>2}",
                             duration / 1000 / 60,
@@ -439,66 +296,19 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                 }
             }
             Parse::Search => {
-                let array = value
-                    .get("result")
-                    .ok_or_else(|| anyhow!("none"))?
-                    .as_object()
-                    .ok_or_else(|| anyhow!("none"))?
-                    .get("songs")
-                    .ok_or_else(|| anyhow!("none"))?
-                    .as_array()
-                    .ok_or_else(|| anyhow!("none"))?;
+                let array: &Vec<Value> = get_val!(value, "result", "songs")?;
                 for v in array.iter() {
-                    let duration = v
-                        .get("duration")
-                        .ok_or_else(|| anyhow!("none"))?
-                        .as_u64()
-                        .ok_or_else(|| anyhow!("none"))? as u32;
+                    let duration: u32 = get_val!(v, "duration")?;
                     vec.push(SongInfo {
-                        id: v
-                            .get("id")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_u64()
-                            .ok_or_else(|| anyhow!("none"))? as u64,
-                        name: v
-                            .get("name")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_str()
-                            .ok_or_else(|| anyhow!("none"))?
-                            .to_owned(),
-                        singer: v
-                            .get("artists")
-                            .ok_or_else(|| anyhow!("none"))?
+                        id: get_val!(v, "id")?,
+                        name: get_val!(v, "name")?,
+                        singer: get_val!(@as &Vec<Value>, v, "artists")?
                             .get(0)
-                            .ok_or_else(|| anyhow!("none"))?
-                            .get("name")
-                            .unwrap_or(&json!("未知"))
-                            .as_str()
-                            .unwrap_or("未知")
-                            .to_owned(),
-                        album: v
-                            .get("album")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .get("name")
-                            .unwrap_or(&json!("未知"))
-                            .as_str()
-                            .unwrap_or("未知")
-                            .to_owned(),
-                        album_id: v
-                            .get("album")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .get("id")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_u64()
-                            .ok_or_else(|| anyhow!("none"))?,
-                        pic_url: v
-                            .get("album")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .get("picUrl")
-                            .unwrap_or(&json!(""))
-                            .as_str()
-                            .unwrap_or("")
-                            .to_owned(),
+                            .map(|v: &Value| get_val!(v, "name").unwrap_or(unk.clone()))
+                            .unwrap_or(unk.clone()),
+                        album: get_val!(v, "album", "name").unwrap_or(unk.clone()),
+                        album_id: get_val!(v, "album", "id")?,
+                        pic_url: get_val!(v, "album", "picUrl").unwrap_or(String::new()),
                         duration: format!(
                             "{:0>2}:{:0>2}",
                             duration / 1000 / 60,
@@ -509,62 +319,19 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                 }
             }
             Parse::Album => {
-                let array = value
-                    .get("songs")
-                    .ok_or_else(|| anyhow!("none"))?
-                    .as_array()
-                    .ok_or_else(|| anyhow!("none"))?;
+                let array: &Vec<Value> = get_val!(value, "songs")?;
                 for v in array.iter() {
-                    let duration = v
-                        .get("dt")
-                        .ok_or_else(|| anyhow!("none"))?
-                        .as_u64()
-                        .ok_or_else(|| anyhow!("none"))? as u32;
+                    let duration: u32 = get_val!(v, "dt")?;
                     vec.push(SongInfo {
-                        id: v
-                            .get("id")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_u64()
-                            .ok_or_else(|| anyhow!("none"))? as u64,
-                        name: v
-                            .get("name")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_str()
-                            .ok_or_else(|| anyhow!("none"))?
-                            .to_owned(),
-                        singer: v
-                            .get("ar")
-                            .ok_or_else(|| anyhow!("none"))?
+                        id: get_val!(v, "id")?,
+                        name: get_val!(v, "name")?,
+                        singer: get_val!(@as &Vec<Value>, v, "ar")?
                             .get(0)
-                            .ok_or_else(|| anyhow!("none"))?
-                            .get("name")
-                            .unwrap_or(&json!("未知"))
-                            .as_str()
-                            .unwrap_or("未知")
-                            .to_owned(),
-                        album: value
-                            .get("album")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .get("name")
-                            .unwrap_or(&json!("未知"))
-                            .as_str()
-                            .unwrap_or("未知")
-                            .to_owned(),
-                        album_id: value
-                            .get("album")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .get("id")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_u64()
-                            .ok_or_else(|| anyhow!("none"))?,
-                        pic_url: value
-                            .get("album")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .get("picUrl")
-                            .unwrap_or(&json!(""))
-                            .as_str()
-                            .unwrap_or("")
-                            .to_owned(),
+                            .map(|v: &Value| get_val!(v, "name").unwrap_or(unk.clone()))
+                            .unwrap_or(unk.clone()),
+                        album: get_val!(value, "album", "name").unwrap_or(unk.clone()),
+                        album_id: get_val!(value, "album", "id")?,
+                        pic_url: get_val!(value, "album", "picUrl").unwrap_or(String::new()),
                         duration: format!(
                             "{:0>2}:{:0>2}",
                             duration / 1000 / 60,
@@ -575,54 +342,16 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                 }
             }
             Parse::Singer => {
-                let array = value
-                    .get("hotSongs")
-                    .ok_or_else(|| anyhow!("none"))?
-                    .as_array()
-                    .ok_or_else(|| anyhow!("none"))?;
-                let ar = value
-                    .get("artist")
-                    .ok_or_else(|| anyhow!("none"))?
-                    .get("name")
-                    .ok_or_else(|| anyhow!("none"))?
-                    .as_str()
-                    .ok_or_else(|| anyhow!("none"))?
-                    .to_owned();
+                let array: &Vec<Value> = get_val!(value, "hotSongs")?;
                 for v in array.iter() {
-                    let duration = v
-                        .get("dt")
-                        .ok_or_else(|| anyhow!("none"))?
-                        .as_u64()
-                        .ok_or_else(|| anyhow!("none"))? as u32;
+                    let duration: u32 = get_val!(v, "dt")?;
                     vec.push(SongInfo {
-                        id: v
-                            .get("id")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_u64()
-                            .ok_or_else(|| anyhow!("none"))? as u64,
-                        name: v
-                            .get("name")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_str()
-                            .ok_or_else(|| anyhow!("none"))?
-                            .to_owned(),
-                        singer: ar.to_owned(),
-                        album: v
-                            .get("al")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .get("name")
-                            .unwrap_or(&json!("未知"))
-                            .as_str()
-                            .unwrap_or("未知")
-                            .to_owned(),
-                        album_id: v
-                            .get("al")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .get("id")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_u64()
-                            .ok_or_else(|| anyhow!("none"))?,
-                        pic_url: "".to_owned(),
+                        id: get_val!(v, "id")?,
+                        name: get_val!(v, "name")?,
+                        singer: get_val!(value, "artist", "name")?,
+                        album: get_val!(v, "al", "name").unwrap_or(unk.clone()),
+                        album_id: get_val!(v, "al", "id")?,
+                        pic_url: String::new(),
                         duration: format!(
                             "{:0>2}:{:0>2}",
                             duration / 1000 / 60,
@@ -660,261 +389,81 @@ pub fn to_song_list(json: String, parse: Parse) -> Result<Vec<SongList>> {
         let mut vec: Vec<SongList> = Vec::new();
         match parse {
             Parse::Usl => {
-                let array = value
-                    .get("playlist")
-                    .ok_or_else(|| anyhow!("none"))?
-                    .as_array()
-                    .ok_or_else(|| anyhow!("none"))?;
+                let array: &Vec<Value> = get_val!(&value, "playlist")?;
                 for v in array.iter() {
                     vec.push(SongList {
-                        id: v
-                            .get("id")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_u64()
-                            .ok_or_else(|| anyhow!("none"))? as u64,
-                        name: v
-                            .get("name")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_str()
-                            .ok_or_else(|| anyhow!("none"))?
-                            .to_owned(),
-                        cover_img_url: v
-                            .get("coverImgUrl")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_str()
-                            .ok_or_else(|| anyhow!("none"))?
-                            .to_owned(),
-                        author: v
-                            .get("creator")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .get("nickname")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_str()
-                            .ok_or_else(|| anyhow!("none"))?
-                            .to_owned(),
+                        id: get_val!(v, "id")?,
+                        name: get_val!(v, "name")?,
+                        cover_img_url: get_val!(v, "coverImgUrl")?,
+                        author: get_val!(v, "creator", "nickname")?,
                     });
                 }
             }
             Parse::Rmd => {
-                let array = value
-                    .get("recommend")
-                    .ok_or_else(|| anyhow!("none"))?
-                    .as_array()
-                    .ok_or_else(|| anyhow!("none"))?;
+                let array: &Vec<Value> = get_val!(&value, "recommend")?;
                 for v in array.iter() {
                     vec.push(SongList {
-                        id: v
-                            .get("id")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_u64()
-                            .ok_or_else(|| anyhow!("none"))? as u64,
-                        name: v
-                            .get("name")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_str()
-                            .ok_or_else(|| anyhow!("none"))?
-                            .to_owned(),
-                        cover_img_url: v
-                            .get("picUrl")
-                            .unwrap_or(&json!(""))
-                            .as_str()
-                            .unwrap_or("")
-                            .to_owned(),
-                        author: v
-                            .get("creator")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .get("nickname")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_str()
-                            .ok_or_else(|| anyhow!("none"))?
-                            .to_owned(),
+                        id: get_val!(v, "id")?,
+                        name: get_val!(v, "name")?,
+                        cover_img_url: get_val!(v, "picUrl").unwrap_or(String::new()),
+                        author: get_val!(v, "creator", "nickname")?,
                     });
                 }
             }
             Parse::Album => {
-                let array = value
-                    .get("albums")
-                    .ok_or_else(|| anyhow!("none"))?
-                    .as_array()
-                    .ok_or_else(|| anyhow!("none"))?;
+                let array: &Vec<Value> = get_val!(&value, "albums")?;
                 for v in array.iter() {
                     vec.push(SongList {
-                        id: v
-                            .get("id")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_u64()
-                            .ok_or_else(|| anyhow!("none"))? as u64,
-                        name: v
-                            .get("name")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_str()
-                            .ok_or_else(|| anyhow!("none"))?
-                            .to_owned(),
-                        cover_img_url: v
-                            .get("picUrl")
-                            .unwrap_or(&json!(""))
-                            .as_str()
-                            .unwrap_or("")
-                            .to_owned(),
-                        author: v
-                            .get("artist")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .get("name")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_str()
-                            .ok_or_else(|| anyhow!("none"))?
-                            .to_owned(),
+                        id: get_val!(v, "id")?,
+                        name: get_val!(v, "name")?,
+                        cover_img_url: get_val!(v, "picUrl")?,
+                        author: get_val!(v, "artist", "name")?,
                     });
                 }
             }
             Parse::Top => {
-                let array = value
-                    .get("playlists")
-                    .ok_or_else(|| anyhow!("none"))?
-                    .as_array()
-                    .ok_or_else(|| anyhow!("none"))?;
+                let array: &Vec<Value> = get_val!(&value, "playlists")?;
                 for v in array.iter() {
                     vec.push(SongList {
-                        id: v
-                            .get("id")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_u64()
-                            .ok_or_else(|| anyhow!("none"))? as u64,
-                        name: v
-                            .get("name")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_str()
-                            .ok_or_else(|| anyhow!("none"))?
-                            .to_owned(),
-                        cover_img_url: v
-                            .get("coverImgUrl")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_str()
-                            .ok_or_else(|| anyhow!("none"))?
-                            .to_owned(),
-                        author: v
-                            .get("creator")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .get("nickname")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_str()
-                            .ok_or_else(|| anyhow!("none"))?
-                            .to_owned(),
+                        id: get_val!(v, "id")?,
+                        name: get_val!(v, "name")?,
+                        cover_img_url: get_val!(v, "coverImgUrl")?,
+                        author: get_val!(v, "creator", "nickname")?,
                     });
                 }
             }
             Parse::Search => {
-                let array = value
-                    .get("result")
-                    .ok_or_else(|| anyhow!("none"))?
-                    .get("playlists")
-                    .ok_or_else(|| anyhow!("none"))?
-                    .as_array()
-                    .ok_or_else(|| anyhow!("none"))?;
+                let array: &Vec<Value> = get_val!(&value, "result", "playlists")?;
                 for v in array.iter() {
                     vec.push(SongList {
-                        id: v
-                            .get("id")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_u64()
-                            .ok_or_else(|| anyhow!("none"))? as u64,
-                        name: v
-                            .get("name")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_str()
-                            .ok_or_else(|| anyhow!("none"))?
-                            .to_owned(),
-                        cover_img_url: v
-                            .get("coverImgUrl")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_str()
-                            .ok_or_else(|| anyhow!("none"))?
-                            .to_owned(),
-                        author: v
-                            .get("creator")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .get("nickname")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_str()
-                            .ok_or_else(|| anyhow!("none"))?
-                            .to_owned(),
+                        id: get_val!(v, "id")?,
+                        name: get_val!(v, "name")?,
+                        cover_img_url: get_val!(v, "coverImgUrl")?,
+                        author: get_val!(v, "creator", "nickname")?,
                     });
                 }
             }
             Parse::SearchAlbum => {
-                let array = value
-                    .get("result")
-                    .ok_or_else(|| anyhow!("none"))?
-                    .get("albums")
-                    .ok_or_else(|| anyhow!("none"))?
-                    .as_array()
-                    .ok_or_else(|| anyhow!("none"))?;
+                let array: &Vec<Value> = get_val!(&value, "result", "albums")?;
                 for v in array.iter() {
                     vec.push(SongList {
-                        id: v
-                            .get("id")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_u64()
-                            .ok_or_else(|| anyhow!("none"))? as u64,
-                        name: v
-                            .get("name")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_str()
-                            .ok_or_else(|| anyhow!("none"))?
-                            .to_owned(),
-                        cover_img_url: v
-                            .get("picUrl")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_str()
-                            .ok_or_else(|| anyhow!("none"))?
-                            .to_owned(),
-                        author: v
-                            .get("artist")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .get("name")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_str()
-                            .ok_or_else(|| anyhow!("none"))?
-                            .to_owned(),
+                        id: get_val!(v, "id")?,
+                        name: get_val!(v, "name")?,
+                        cover_img_url: get_val!(v, "picUrl")?,
+                        author: get_val!(v, "artist", "name")?,
                     });
                 }
             }
             Parse::LikeAlbum => {
-                let array = value
-                    .get("data")
-                    .ok_or_else(|| anyhow!("none"))?
-                    .as_array()
-                    .ok_or_else(|| anyhow!("none"))?;
+                let array: &Vec<Value> = get_val!(&value, "data")?;
                 for v in array.iter() {
                     vec.push(SongList {
-                        id: v
-                            .get("id")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_u64()
-                            .ok_or_else(|| anyhow!("none"))? as u64,
-                        name: v
-                            .get("name")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_str()
-                            .ok_or_else(|| anyhow!("none"))?
-                            .to_owned(),
-                        cover_img_url: v
-                            .get("picUrl")
-                            .ok_or_else(|| anyhow!("none"))?
-                            .as_str()
-                            .ok_or_else(|| anyhow!("none"))?
-                            .to_owned(),
-                        author: v
-                            .get("artists")
-                            .ok_or_else(|| anyhow!("none"))?
+                        id: get_val!(v, "id")?,
+                        name: get_val!(v, "name")?,
+                        cover_img_url: get_val!(v, "picUrl")?,
+                        author: get_val!(@as &Vec<Value>, v, "artists")?
                             .get(0)
-                            .map_or(Ok(String::new()), |v: &Value| -> Result<String> {
-                                Ok(v.get("name")
-                                    .ok_or_else(|| anyhow!("none"))?
-                                    .as_str()
-                                    .ok_or_else(|| anyhow!("none"))?
-                                    .to_owned())
-                            })?,
+                            .map_or(Ok(String::new()), |v: &Value| get_val!(v, "name"))?,
                     });
                 }
             }
@@ -927,17 +476,11 @@ pub fn to_song_list(json: String, parse: Parse) -> Result<Vec<SongList>> {
 
 #[allow(unused)]
 pub fn to_song_id_list(json: String) -> Result<Vec<u64>> {
-    let value = serde_json::from_str::<Value>(&json)?;
-    if value.get("code").ok_or_else(|| anyhow!("none"))?.eq(&200) {
-        let id_array = value
-            .get("ids")
-            .ok_or_else(|| anyhow!("none"))?
-            .as_array()
-            .ok_or_else(|| anyhow!("none"))?;
-        return id_array
-            .iter()
-            .map(|id| id.as_u64().ok_or_else(|| anyhow!("none")))
-            .collect();
+    let value = &serde_json::from_str::<Value>(&json)?;
+    let code: i64 = get_val!(value, "code")?;
+    if code == 200 {
+        let id_array: &Vec<Value> = get_val!(value, "ids")?;
+        return id_array.iter().map(|id| u64::dval(id)).collect();
     }
     Err(anyhow!("none"))
 }
@@ -951,47 +494,30 @@ pub struct Msg {
 
 #[allow(unused)]
 pub fn to_msg(json: String) -> Result<Msg> {
-    let value = serde_json::from_str::<Value>(&json)?;
-    let code = value
-        .get("code")
-        .ok_or_else(|| anyhow!("none"))?
-        .as_i64()
-        .ok_or_else(|| anyhow!("none"))? as i32;
+    let value = &serde_json::from_str::<Value>(&json)?;
+    let code: i32 = get_val!(value, "code")?;
     if code.eq(&200) {
         return Ok(Msg {
             code: 200,
             msg: "".to_owned(),
         });
     }
-    let msg = value
-        .get("msg")
-        .ok_or_else(|| anyhow!("none"))?
-        .as_str()
-        .ok_or_else(|| anyhow!("none"))?
-        .to_owned();
+    let msg = get_val!(value, "msg")?;
     Ok(Msg { code, msg })
 }
 
 #[allow(unused)]
 pub fn to_message(json: String) -> Result<Msg> {
-    let value = serde_json::from_str::<Value>(&json)?;
-    let code = value
-        .get("code")
-        .ok_or_else(|| anyhow!("none"))?
-        .as_i64()
-        .ok_or_else(|| anyhow!("none"))? as i32;
+    let value = &serde_json::from_str::<Value>(&json)?;
+    let code: i32 = get_val!(value, "code")?;
     if code.eq(&200) {
         return Ok(Msg {
             code: 200,
             msg: "".to_owned(),
         });
     }
-    let msg = value
-        .get("message")
-        .ok_or_else(|| anyhow!("none"))?
-        .as_str()
-        .ok_or_else(|| anyhow!("none"))?
-        .to_owned();
+
+    let msg = get_val!(value, "message")?;
     Ok(Msg { code, msg })
 }
 
@@ -1012,46 +538,19 @@ pub struct LoginInfo {
 
 #[allow(unused)]
 pub fn to_login_info(json: String) -> Result<LoginInfo> {
-    let value = serde_json::from_str::<Value>(&json)?;
-    let code = value
-        .get("code")
-        .ok_or_else(|| anyhow!("none"))?
-        .as_i64()
-        .ok_or_else(|| anyhow!("none"))? as i32;
+    let value = &serde_json::from_str::<Value>(&json)?;
+    let code: i32 = get_val!(value, "code")?;
     if code.eq(&200) {
-        let profile = value
-            .get("profile")
-            .ok_or_else(|| anyhow!("none"))?
-            .as_object()
-            .ok_or_else(|| anyhow!("none"))?;
         return Ok(LoginInfo {
             code,
-            uid: profile
-                .get("userId")
-                .ok_or_else(|| anyhow!("none"))?
-                .as_u64()
-                .ok_or_else(|| anyhow!("none"))? as u64,
-            nickname: profile
-                .get("nickname")
-                .ok_or_else(|| anyhow!("none"))?
-                .as_str()
-                .ok_or_else(|| anyhow!("none"))?
-                .to_owned(),
-            avatar_url: profile
-                .get("avatarUrl")
-                .ok_or_else(|| anyhow!("none"))?
-                .as_str()
-                .ok_or_else(|| anyhow!("none"))?
-                .to_owned(),
+            uid: get_val!(value, "profile", "userId")?,
+            nickname: get_val!(value, "profile", "nickname")?,
+            avatar_url: get_val!(value, "profile", "avatarUrl")?,
             msg: "".to_owned(),
         });
     }
-    let msg = value
-        .get("msg")
-        .ok_or_else(|| anyhow!("none"))?
-        .as_str()
-        .ok_or_else(|| anyhow!("none"))?
-        .to_owned();
+
+    let msg = get_val!(value, "msg")?;
     Ok(LoginInfo {
         code,
         uid: 0,
@@ -1084,99 +583,32 @@ pub struct BannersInfo {
 
 #[allow(unused)]
 pub fn to_banners_info(json: String) -> Result<Vec<BannersInfo>> {
-    let value = serde_json::from_str::<Value>(&json)?;
-    if value
-        .get("code")
-        .ok_or_else(|| anyhow!("none"))?
-        .eq(&200i32)
-    {
-        let array = value
-            .get("data")
-            .ok_or_else(|| anyhow!("none"))?
-            .get("blocks")
-            .ok_or_else(|| anyhow!("none"))?
-            .as_array()
-            .ok_or_else(|| anyhow!("none"))?;
+    let value = &serde_json::from_str::<Value>(&json)?;
+    let code: i32 = get_val!(value, "code")?;
+    if code == 200 {
+        let array: &Vec<Value> = get_val!(value, "data", "blocks")?;
         for v in array.iter() {
-            let show_type = v.get("showType").ok_or_else(|| anyhow!("none"))?;
+            let show_type: String = get_val!(v, "showType")?;
             if show_type.eq("BANNER") {
                 let mut vec: Vec<BannersInfo> = Vec::new();
-                let banners = v
-                    .get("extInfo")
-                    .ok_or_else(|| anyhow!("none"))?
-                    .get("banners")
-                    .ok_or_else(|| anyhow!("none"))?
-                    .as_array()
-                    .ok_or_else(|| anyhow!("none"))?;
+                let banners: &Vec<Value> = get_val!(v, "extInfo", "banners")?;
                 for v in banners.iter() {
-                    if v.get("typeTitle")
-                        .ok_or_else(|| anyhow!("none"))?
-                        .as_str()
-                        .ok_or_else(|| anyhow!("none"))?
-                        .eq("新歌首发")
-                    {
+                    if get_val!(@as String, v, "typeTitle")?.eq("新歌首发") {
                         if let Some(song) = v.get("song") {
                             if song.is_null() {
                                 continue;
                             }
-                            let duration = song
-                                .get("dt")
-                                .ok_or_else(|| anyhow!("none"))?
-                                .as_u64()
-                                .ok_or_else(|| anyhow!("none"))?;
+                            let duration: u64 = get_val!(song, "dt")?;
                             vec.push(BannersInfo {
-                                pic: v
-                                    .get("pic")
-                                    .ok_or_else(|| anyhow!("none"))?
-                                    .as_str()
-                                    .ok_or_else(|| anyhow!("none"))?
-                                    .to_owned(),
-                                name: song
-                                    .get("name")
-                                    .ok_or_else(|| anyhow!("none"))?
-                                    .as_str()
-                                    .ok_or_else(|| anyhow!("none"))?
-                                    .to_owned(),
-                                id: song
-                                    .get("id")
-                                    .ok_or_else(|| anyhow!("none"))?
-                                    .as_u64()
-                                    .ok_or_else(|| anyhow!("none"))?,
-                                singer: song
-                                    .get("ar")
-                                    .ok_or_else(|| anyhow!("none"))?
-                                    .as_array()
-                                    .ok_or_else(|| anyhow!("none"))?
+                                pic: get_val!(v, "pic")?,
+                                name: get_val!(song, "name")?,
+                                id: get_val!(song, "id")?,
+                                singer: get_val!(@as &Vec<Value>, song, "ar")?
                                     .get(0)
-                                    .ok_or_else(|| anyhow!("none"))?
-                                    .get("name")
-                                    .ok_or_else(|| anyhow!("none"))?
-                                    .as_str()
-                                    .ok_or_else(|| anyhow!("none"))?
-                                    .to_owned(),
-                                album: song
-                                    .get("al")
-                                    .ok_or_else(|| anyhow!("none"))?
-                                    .get("name")
-                                    .ok_or_else(|| anyhow!("none"))?
-                                    .as_str()
-                                    .ok_or_else(|| anyhow!("none"))?
-                                    .to_owned(),
-                                album_id: song
-                                    .get("al")
-                                    .ok_or_else(|| anyhow!("none"))?
-                                    .get("id")
-                                    .ok_or_else(|| anyhow!("none"))?
-                                    .as_u64()
-                                    .ok_or_else(|| anyhow!("none"))?,
-                                pic_url: song
-                                    .get("al")
-                                    .ok_or_else(|| anyhow!("none"))?
-                                    .get("picUrl")
-                                    .ok_or_else(|| anyhow!("none"))?
-                                    .as_str()
-                                    .ok_or_else(|| anyhow!("none"))?
-                                    .to_owned(),
+                                    .map_or(Ok(String::new()), |v: &Value| get_val!(v, "name"))?,
+                                album: get_val!(song, "al", "name")?,
+                                album_id: get_val!(song, "al", "id")?,
+                                pic_url: get_val!(song, "al", "picUrl")?,
                                 duration: format!(
                                     "{:0>2}:{:0>2}",
                                     duration / 1000 / 60,
@@ -1196,21 +628,12 @@ pub fn to_banners_info(json: String) -> Result<Vec<BannersInfo>> {
 
 #[allow(unused)]
 pub fn to_captcha(json: String) -> Result<()> {
-    let value = serde_json::from_str::<Value>(&json)?;
-    let code = value
-        .get("code")
-        .ok_or_else(|| anyhow!("none"))?
-        .as_i64()
-        .ok_or_else(|| anyhow!("none"))? as i32;
+    let value = &serde_json::from_str::<Value>(&json)?;
+    let code: i32 = get_val!(value, "code")?;
     if code.eq(&200) {
         return Ok(());
     }
-    let data = value
-        .get("data")
-        .ok_or_else(|| anyhow!("none"))?
-        .as_bool()
-        .ok_or_else(|| anyhow!("none"))?
-        .to_owned();
+    let data: bool = get_val!(value, "data")?;
     if data {
         return Ok(());
     }
@@ -1219,19 +642,11 @@ pub fn to_captcha(json: String) -> Result<()> {
 
 #[allow(unused)]
 pub fn to_unikey(json: String) -> Result<String> {
-    let value = serde_json::from_str::<Value>(&json)?;
-    let code = value
-        .get("code")
-        .ok_or_else(|| anyhow!("none"))?
-        .as_i64()
-        .ok_or_else(|| anyhow!("none"))? as i32;
+    let value = &serde_json::from_str::<Value>(&json)?;
+    let code: i32 = get_val!(value, "code")?;
+
     if code.eq(&200) {
-        let unikey = value
-            .get("unikey")
-            .ok_or_else(|| anyhow!("none"))?
-            .as_str()
-            .ok_or_else(|| anyhow!("none"))?
-            .to_owned();
+        let unikey: String = get_val!(value, "unikey")?;
         return Ok(unikey);
     }
     Err(anyhow!("get unikey err!"))
@@ -1254,51 +669,19 @@ pub struct TopList {
 
 #[allow(unused)]
 pub fn to_toplist(json: String) -> Result<Vec<TopList>> {
-    let value = serde_json::from_str::<Value>(&json)?;
-    let code = value
-        .get("code")
-        .ok_or_else(|| anyhow!("none"))?
-        .as_i64()
-        .ok_or_else(|| anyhow!("none"))? as i32;
+    let value = &serde_json::from_str::<Value>(&json)?;
+    let code: i32 = get_val!(value, "code")?;
+
     if code.eq(&200) {
-        let list = value
-            .get("list")
-            .ok_or_else(|| anyhow!("none"))?
-            .as_array()
-            .ok_or_else(|| anyhow!("none"))?
-            .to_owned();
+        let list: &Vec<Value> = get_val!(value, "list")?;
         let mut toplist = Vec::new();
         for t in list {
             toplist.push(TopList {
-                id: t
-                    .get("id")
-                    .ok_or_else(|| anyhow!("none"))?
-                    .as_u64()
-                    .ok_or_else(|| anyhow!("none"))?,
-                name: t
-                    .get("name")
-                    .ok_or_else(|| anyhow!("none"))?
-                    .as_str()
-                    .ok_or_else(|| anyhow!("none"))?
-                    .to_owned(),
-                update: t
-                    .get("updateFrequency")
-                    .unwrap_or(&json!(""))
-                    .as_str()
-                    .unwrap_or("")
-                    .to_owned(),
-                description: t
-                    .get("description")
-                    .unwrap_or(&json!(""))
-                    .as_str()
-                    .unwrap_or("")
-                    .to_owned(),
-                cover: t
-                    .get("coverImgUrl")
-                    .unwrap_or(&json!(""))
-                    .as_str()
-                    .unwrap_or("")
-                    .to_owned(),
+                id: get_val!(t, "id")?,
+                name: get_val!(t, "name")?,
+                update: get_val!(t, "updateFrequency").unwrap_or(String::new()),
+                description: get_val!(t, "description").unwrap_or(String::new()),
+                cover: get_val!(t, "coverImgUrl").unwrap_or(String::new()),
             });
         }
         return Ok(toplist);
@@ -1323,33 +706,14 @@ pub struct SongListDetailDynamic {
 
 #[allow(unused)]
 pub fn to_songlist_detail_dynamic(json: String) -> Result<SongListDetailDynamic> {
-    let value = serde_json::from_str::<Value>(&json)?;
-    if value
-        .get("code")
-        .ok_or_else(|| anyhow!("none"))?
-        .eq(&200i32)
-    {
+    let value = &serde_json::from_str::<Value>(&json)?;
+    let code: i32 = get_val!(value, "code")?;
+    if code.eq(&200) {
         return Ok(SongListDetailDynamic {
-            subscribed: value
-                .get("subscribed")
-                .ok_or_else(|| anyhow!("none"))?
-                .as_bool()
-                .ok_or_else(|| anyhow!("none"))?,
-            booked_count: value
-                .get("bookedCount")
-                .ok_or_else(|| anyhow!("none"))?
-                .as_u64()
-                .ok_or_else(|| anyhow!("none"))?,
-            play_count: value
-                .get("playCount")
-                .ok_or_else(|| anyhow!("none"))?
-                .as_u64()
-                .ok_or_else(|| anyhow!("none"))?,
-            comment_count: value
-                .get("commentCount")
-                .ok_or_else(|| anyhow!("none"))?
-                .as_u64()
-                .ok_or_else(|| anyhow!("none"))?,
+            subscribed: get_val!(value, "subscribed")?,
+            booked_count: get_val!(value, "bookedCount")?,
+            play_count: get_val!(value, "playCount")?,
+            comment_count: get_val!(value, "commentCount")?,
         });
     }
     Err(anyhow!("get songlist detail dynamic err!"))
@@ -1365,28 +729,14 @@ pub struct AlbumDetailDynamic {
 
 #[allow(unused)]
 pub fn to_album_detail_dynamic(json: String) -> Result<AlbumDetailDynamic> {
-    let value = serde_json::from_str::<Value>(&json)?;
-    if value
-        .get("code")
-        .ok_or_else(|| anyhow!("none"))?
-        .eq(&200i32)
-    {
+    let value = &serde_json::from_str::<Value>(&json)?;
+    let code: i32 = get_val!(value, "code")?;
+
+    if code.eq(&200) {
         return Ok(AlbumDetailDynamic {
-            is_sub: value
-                .get("isSub")
-                .ok_or_else(|| anyhow!("none"))?
-                .as_bool()
-                .ok_or_else(|| anyhow!("none"))?,
-            sub_count: value
-                .get("subCount")
-                .ok_or_else(|| anyhow!("none"))?
-                .as_u64()
-                .ok_or_else(|| anyhow!("none"))?,
-            comment_count: value
-                .get("commentCount")
-                .ok_or_else(|| anyhow!("none"))?
-                .as_u64()
-                .ok_or_else(|| anyhow!("none"))?,
+            is_sub: get_val!(value, "isSub")?,
+            sub_count: get_val!(value, "subCount")?,
+            comment_count: get_val!(value, "commentCount")?,
         });
     }
     Err(anyhow!("get album detail dynamic err!"))
