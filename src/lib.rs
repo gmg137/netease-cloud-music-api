@@ -43,6 +43,7 @@ const USER_AGENT_LIST: [&str; 14] = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/42.0.2311.135 Safari/537.36 Edge/13.1058",
 ];
 
+#[derive(Clone)]
 pub struct MusicApi {
     client: HttpClient,
     csrf: RefCell<String>,
@@ -57,15 +58,16 @@ enum CryptoApi {
 
 impl Default for MusicApi {
     fn default() -> Self {
-        Self::new()
+        Self::new(0)
     }
 }
 
 impl MusicApi {
     #[allow(unused)]
-    pub fn new() -> Self {
+    pub fn new(max_cons: usize) -> Self {
         let client = HttpClient::builder()
             .timeout(Duration::from_secs(TIMEOUT))
+            .max_connections(max_cons)
             .cookies()
             .build()
             .expect("初始化网络请求失败!");
@@ -76,9 +78,10 @@ impl MusicApi {
     }
 
     #[allow(unused)]
-    pub fn from_cookie_jar(cookie_jar: CookieJar) -> Self {
+    pub fn from_cookie_jar(cookie_jar: CookieJar, max_cons: usize) -> Self {
         let client = HttpClient::builder()
             .timeout(Duration::from_secs(TIMEOUT))
+            .max_connections(max_cons)
             .cookies()
             .cookie_jar(cookie_jar)
             .build()
@@ -1022,7 +1025,7 @@ mod tests {
 
     #[async_std::test]
     async fn test() {
-        let api = MusicApi::new();
+        let api = MusicApi::default();
         assert!(api.banners().await.is_ok());
     }
 }
