@@ -47,7 +47,7 @@ impl Crypto {
         let message = format!("nobody{}use{}md5forencrypt", url, text);
         let digest = hex::encode(hash(MessageDigest::md5(), message.as_bytes()).unwrap());
         let data = format!("{}-36cd479b6b5-{}-36cd479b6b5-{}", url, text, digest);
-        let params = Crypto::aes_encrypt(&data, &*EAPIKEY, ecb, Some(&*IV), |t: &Vec<u8>| {
+        let params = Crypto::aes_encrypt(&data, &EAPIKEY, ecb, Some(&*IV), |t: &Vec<u8>| {
             hex::encode_upper(t)
         });
         QueryParams::from(vec![("params", params.as_str())]).stringify()
@@ -61,7 +61,7 @@ impl Crypto {
             .map(|i| BASE62[(i % 62) as usize])
             .collect();
 
-        let params1 = Crypto::aes_encrypt(text, &*PRESET_KEY, cbc, Some(&*IV), |t: &Vec<u8>| {
+        let params1 = Crypto::aes_encrypt(text, &PRESET_KEY, cbc, Some(&*IV), |t: &Vec<u8>| {
             base64::encode(t)
         });
 
@@ -71,7 +71,7 @@ impl Crypto {
 
         let enc_sec_key = Crypto::rsa_encrypt(
             std::str::from_utf8(&key.iter().rev().copied().collect::<Vec<u8>>()).unwrap(),
-            &*RSA_PUBLIC_KEY,
+            &RSA_PUBLIC_KEY,
         );
 
         QueryParams::from(vec![
@@ -82,7 +82,7 @@ impl Crypto {
     }
 
     pub fn linuxapi(text: &str) -> String {
-        let params = Crypto::aes_encrypt(text, &*LINUX_API_KEY, ecb, None, |t: &Vec<u8>| {
+        let params = Crypto::aes_encrypt(text, &LINUX_API_KEY, ecb, None, |t: &Vec<u8>| {
             hex::encode(t)
         })
         .to_uppercase();

@@ -63,7 +63,7 @@ where
 {
     let v = names.iter().fold(Ok(v), |v, n| {
         v?.get(n)
-            .ok_or(anyhow!("key '{}' not found, in chain {:?}", n, names))
+            .ok_or_else(|| anyhow!("key '{}' not found, in chain {:?}", n, names))
     })?;
     Ok(T::dval(v)?)
 }
@@ -115,7 +115,7 @@ pub fn to_singer_info(json: String) -> Result<Vec<SingerInfo>> {
         let mut vec: Vec<SingerInfo> = Vec::new();
         let array: &Vec<Value> = get_val!(value, "result", "artists")?;
         for v in array.iter() {
-            let mut pic_url: String = get_val!(v, "img1v1Url").unwrap_or(String::new());
+            let mut pic_url: String = get_val!(v, "img1v1Url").unwrap_or_default();
             if pic_url.ends_with("5639395138885805.jpg") {
                 pic_url = "".to_owned();
             }
@@ -149,7 +149,7 @@ pub fn to_song_url(json: String) -> Result<Vec<SongUrl>> {
         let mut vec: Vec<SongUrl> = Vec::new();
         let array: &Vec<Value> = get_val!(value, "data")?;
         for v in array.iter() {
-            let url = get_val!(v, "url").unwrap_or(String::new());
+            let url: String = get_val!(v, "url").unwrap_or_default();
             if !url.is_empty() {
                 vec.push(SongUrl {
                     id: get_val!(v, "id")?,
@@ -215,11 +215,11 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         name: get_val!(v, "name")?,
                         singer: get_val!(@as &Vec<Value>, v, "ar")?
                             .get(0)
-                            .map(|v: &Value| get_val!(v, "name").unwrap_or(unk.clone()))
-                            .unwrap_or(unk.clone()),
-                        album: get_val!(v, "al", "name").unwrap_or(unk.clone()),
+                            .map(|v: &Value| get_val!(v, "name").unwrap_or_else(|_| unk.clone()))
+                            .unwrap_or_else(|| unk.clone()),
+                        album: get_val!(v, "al", "name").unwrap_or_else(|_| unk.clone()),
                         album_id: get_val!(v, "al", "id")?,
-                        pic_url: get_val!(v, "al", "picUrl").unwrap_or(String::new()),
+                        pic_url: get_val!(v, "al", "picUrl").unwrap_or_default(),
                         duration: format!(
                             "{:0>2}:{:0>2}",
                             duration / 1000 / 60,
@@ -236,8 +236,8 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                     vec.push(SongInfo {
                         id: get_val!(v, "songId")?,
                         name: get_val!(v, "songName")?,
-                        singer: get_val!(v, "artist").unwrap_or(unk.clone()),
-                        album: get_val!(v, "album").unwrap_or(unk.clone()),
+                        singer: get_val!(v, "artist").unwrap_or_else(|_| unk.clone()),
+                        album: get_val!(v, "album").unwrap_or_else(|_| unk.clone()),
                         album_id: 0,
                         pic_url: String::new(),
                         duration: format!(
@@ -258,11 +258,11 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         name: get_val!(v, "name")?,
                         singer: get_val!(@as &Vec<Value>, v, "artists")?
                             .get(0)
-                            .map(|v: &Value| get_val!(v, "name").unwrap_or(unk.clone()))
-                            .unwrap_or(unk.clone()),
-                        album: get_val!(v, "album", "name").unwrap_or(unk.clone()),
+                            .map(|v: &Value| get_val!(v, "name").unwrap_or_else(|_| unk.clone()))
+                            .unwrap_or_else(|| unk.clone()),
+                        album: get_val!(v, "album", "name").unwrap_or_else(|_| unk.clone()),
                         album_id: get_val!(v, "album", "id")?,
-                        pic_url: get_val!(v, "album", "picUrl").unwrap_or(String::new()),
+                        pic_url: get_val!(v, "album", "picUrl").unwrap_or_default(),
                         duration: format!(
                             "{:0>2}:{:0>2}",
                             duration / 1000 / 60,
@@ -281,11 +281,11 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         name: get_val!(v, "name")?,
                         singer: get_val!(@as &Vec<Value>, v, "artists")?
                             .get(0)
-                            .map(|v: &Value| get_val!(v, "name").unwrap_or(unk.clone()))
-                            .unwrap_or(unk.clone()),
-                        album: get_val!(v, "album", "name").unwrap_or(unk.clone()),
+                            .map(|v: &Value| get_val!(v, "name").unwrap_or_else(|_| unk.clone()))
+                            .unwrap_or_else(|| unk.clone()),
+                        album: get_val!(v, "album", "name").unwrap_or_else(|_| unk.clone()),
                         album_id: get_val!(v, "album", "id")?,
-                        pic_url: get_val!(v, "album", "picUrl").unwrap_or(String::new()),
+                        pic_url: get_val!(v, "album", "picUrl").unwrap_or_default(),
                         duration: format!(
                             "{:0>2}:{:0>2}",
                             duration / 1000 / 60,
@@ -304,11 +304,11 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         name: get_val!(v, "name")?,
                         singer: get_val!(@as &Vec<Value>, v, "artists")?
                             .get(0)
-                            .map(|v: &Value| get_val!(v, "name").unwrap_or(unk.clone()))
-                            .unwrap_or(unk.clone()),
-                        album: get_val!(v, "album", "name").unwrap_or(unk.clone()),
+                            .map(|v: &Value| get_val!(v, "name").unwrap_or_else(|_| unk.clone()))
+                            .unwrap_or_else(|| unk.clone()),
+                        album: get_val!(v, "album", "name").unwrap_or_else(|_| unk.clone()),
                         album_id: get_val!(v, "album", "id")?,
-                        pic_url: get_val!(v, "album", "picUrl").unwrap_or(String::new()),
+                        pic_url: get_val!(v, "album", "picUrl").unwrap_or_default(),
                         duration: format!(
                             "{:0>2}:{:0>2}",
                             duration / 1000 / 60,
@@ -327,11 +327,11 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         name: get_val!(v, "name")?,
                         singer: get_val!(@as &Vec<Value>, v, "ar")?
                             .get(0)
-                            .map(|v: &Value| get_val!(v, "name").unwrap_or(unk.clone()))
-                            .unwrap_or(unk.clone()),
-                        album: get_val!(value, "album", "name").unwrap_or(unk.clone()),
+                            .map(|v: &Value| get_val!(v, "name").unwrap_or_else(|_| unk.clone()))
+                            .unwrap_or_else(|| unk.clone()),
+                        album: get_val!(value, "album", "name").unwrap_or_else(|_| unk.clone()),
                         album_id: get_val!(value, "album", "id")?,
-                        pic_url: get_val!(value, "album", "picUrl").unwrap_or(String::new()),
+                        pic_url: get_val!(value, "album", "picUrl").unwrap_or_default(),
                         duration: format!(
                             "{:0>2}:{:0>2}",
                             duration / 1000 / 60,
@@ -349,7 +349,7 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         id: get_val!(v, "id")?,
                         name: get_val!(v, "name")?,
                         singer: get_val!(value, "artist", "name")?,
-                        album: get_val!(v, "al", "name").unwrap_or(unk.clone()),
+                        album: get_val!(v, "al", "name").unwrap_or_else(|_| unk.clone()),
                         album_id: get_val!(v, "al", "id")?,
                         pic_url: String::new(),
                         duration: format!(
@@ -377,7 +377,7 @@ pub struct SongList {
     pub name: String,
     /// 歌单封面
     pub cover_img_url: String,
-
+    /// 歌单作者
     pub author: String,
 }
 
@@ -405,7 +405,7 @@ pub fn to_song_list(json: String, parse: Parse) -> Result<Vec<SongList>> {
                     vec.push(SongList {
                         id: get_val!(v, "id")?,
                         name: get_val!(v, "name")?,
-                        cover_img_url: get_val!(v, "picUrl").unwrap_or(String::new()),
+                        cover_img_url: get_val!(v, "picUrl").unwrap_or_default(),
                         author: get_val!(v, "creator", "nickname")?,
                     });
                 }
@@ -480,7 +480,7 @@ pub fn to_song_id_list(json: String) -> Result<Vec<u64>> {
     let code: i64 = get_val!(value, "code")?;
     if code == 200 {
         let id_array: &Vec<Value> = get_val!(value, "ids")?;
-        return id_array.iter().map(|id| u64::dval(id)).collect();
+        return id_array.iter().map(u64::dval).collect();
     }
     Err(anyhow!("none"))
 }
@@ -679,9 +679,9 @@ pub fn to_toplist(json: String) -> Result<Vec<TopList>> {
             toplist.push(TopList {
                 id: get_val!(t, "id")?,
                 name: get_val!(t, "name")?,
-                update: get_val!(t, "updateFrequency").unwrap_or(String::new()),
-                description: get_val!(t, "description").unwrap_or(String::new()),
-                cover: get_val!(t, "coverImgUrl").unwrap_or(String::new()),
+                update: get_val!(t, "updateFrequency").unwrap_or_default(),
+                description: get_val!(t, "description").unwrap_or_default(),
+                cover: get_val!(t, "coverImgUrl").unwrap_or_default(),
             });
         }
         return Ok(toplist);
