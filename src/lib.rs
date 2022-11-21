@@ -428,7 +428,7 @@ impl MusicApi {
     /// 歌单详情
     /// songlist_id: 歌单 id
     #[allow(unused)]
-    pub async fn song_list_detail(&self, songlist_id: u64) -> Result<Vec<SongInfo>> {
+    pub async fn song_list_detail(&self, songlist_id: u64) -> Result<PlayListDetail> {
         let csrf_token = self.csrf.borrow().to_owned();
         let path = "/weapi/v6/playlist/detail";
         let mut params = HashMap::new();
@@ -442,7 +442,7 @@ impl MusicApi {
         let result = self
             .request(Method::Post, path, params, CryptoApi::Weapi, "", true)
             .await?;
-        to_song_info(result, Parse::Usl)
+        to_mix_detail(&serde_json::from_str(&result)?)
     }
 
     /// 歌曲详情
@@ -734,7 +734,7 @@ impl MusicApi {
     /// 专辑
     /// album_id: 专辑 id
     #[allow(unused)]
-    pub async fn album(&self, album_id: u64) -> Result<Vec<SongInfo>> {
+    pub async fn album(&self, album_id: u64) -> Result<AlbumDetail> {
         let path = format!("/weapi/v1/album/{}", album_id);
         let result = self
             .request(
@@ -746,13 +746,13 @@ impl MusicApi {
                 true,
             )
             .await?;
-        to_song_info(result, Parse::Album)
+        to_album_detail(&serde_json::from_str(&result)?)
     }
 
     /// 歌单动态信息
     /// songlist_id: 歌单 id
     #[allow(unused)]
-    pub async fn songlist_detail_dynamic(&self, songlist_id: u64) -> Result<SongListDetailDynamic> {
+    pub async fn songlist_detail_dynamic(&self, songlist_id: u64) -> Result<PlayListDetailDynamic> {
         let path = "/weapi/playlist/detail/dynamic";
         let mut params = HashMap::new();
         let id = songlist_id.to_string();
@@ -865,7 +865,7 @@ impl MusicApi {
     /// 香港电台中文歌曲龙虎榜: 10169002
     /// 华语金曲榜: 4395559
     #[allow(unused)]
-    pub async fn top_songs(&self, list_id: u64) -> Result<Vec<SongInfo>> {
+    pub async fn top_songs(&self, list_id: u64) -> Result<PlayListDetail> {
         self.song_list_detail(list_id).await
     }
 
