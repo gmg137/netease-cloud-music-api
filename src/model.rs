@@ -57,6 +57,12 @@ impl<'a> DeVal<'a> for &'a Vec<Value> {
     }
 }
 
+impl<'a> DeVal<'a> for &'a Value {
+    fn dval(v: &'a Value) -> Result<Self> {
+        return Ok(v);
+    }
+}
+
 fn get_val_chain<'a, T>(v: &'a Value, names: &[&str]) -> Result<T>
 where
     T: DeVal<'a>,
@@ -163,6 +169,48 @@ pub fn to_song_url(json: String) -> Result<Vec<SongUrl>> {
     Err(anyhow!("none"))
 }
 
+#[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
+pub enum SongCopyright {
+    Free,
+    VipOnly,
+    Payment,
+    VipOnlyHighRate,
+    Unavailable,
+    Unknown,
+}
+
+impl SongCopyright {
+    fn from_fee(fee: i32) -> Self {
+        match fee {
+            0 => Self::Free,
+            1 => Self::VipOnly,
+            4 => Self::Payment,
+            8 => Self::VipOnlyHighRate,
+            _ => Self::Unknown,
+        }
+    }
+    pub fn from_privilege(v: &Value) -> Result<Self> {
+        // let sp: i32 = get_val!(v, "sp")?;
+        // let subp: i32 = get_val!(v, "subp")?;
+        // let cp: i32 = get_val!(v, "cp")?;
+
+        // seems 'st' is enough for unavailable
+        let st: i32 = get_val!(v, "st")?;
+        let fee: i32 = get_val!(v, "fee")?;
+
+        let res = if st < 0 {
+            Self::Unavailable
+        } else {
+            Self::from_fee(fee)
+        };
+        Ok(res)
+    }
+
+    pub fn playable(&self) -> bool {
+        self != &Self::Unavailable
+    }
+}
+
 /// 歌曲信息
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct SongInfo {
@@ -182,6 +230,8 @@ pub struct SongInfo {
     pub duration: u64,
     /// 歌曲链接
     pub song_url: String,
+
+    pub copyright: SongCopyright,
 }
 
 impl PartialEq for SongInfo {
@@ -221,6 +271,7 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         pic_url: get_val!(v, "al", "picUrl").unwrap_or_default(),
                         duration: get_val!(v, "dt")?,
                         song_url: String::new(),
+                        copyright: SongCopyright::Unknown,
                     });
                 }
             }
@@ -237,6 +288,7 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         pic_url: String::new(),
                         duration: get_val!(v, "simpleSong", "dt")?,
                         song_url: String::new(),
+                        copyright: SongCopyright::Unknown,
                     });
                 }
             }
@@ -255,6 +307,7 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         pic_url: get_val!(v, "album", "picUrl").unwrap_or_default(),
                         duration: get_val!(v, "duration")?,
                         song_url: String::new(),
+                        copyright: SongCopyright::Unknown,
                     });
                 }
             }
@@ -273,6 +326,7 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         pic_url: get_val!(v, "album", "picUrl").unwrap_or_default(),
                         duration: get_val!(v, "duration")?,
                         song_url: String::new(),
+                        copyright: SongCopyright::Unknown,
                     });
                 }
             }
@@ -291,6 +345,7 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         pic_url: get_val!(v, "album", "picUrl").unwrap_or_default(),
                         duration: get_val!(v, "duration")?,
                         song_url: String::new(),
+                        copyright: SongCopyright::Unknown,
                     });
                 }
             }
@@ -310,6 +365,7 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         pic_url: get_val!(value, "album", "picUrl").unwrap_or_default(),
                         duration: get_val!(v, "dt")?,
                         song_url: String::new(),
+                        copyright: SongCopyright::Unknown,
                     });
                 }
             }
@@ -325,6 +381,7 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         pic_url: String::new(),
                         duration: get_val!(v, "dt")?,
                         song_url: String::new(),
+                        copyright: SongCopyright::Unknown,
                     });
                 }
             }
@@ -361,7 +418,8 @@ pub fn to_mix_detail(json: &Value) -> Result<PlayListDetail> {
         if array.is_empty() {
             array = get_val!(value, "playlist", "tracks")?;
         }
-        for v in array.iter() {
+        let array_privilege: &Vec<Value> = get_val!(value, "privileges")?;
+        for (v, p) in array.iter().zip(array_privilege.iter()) {
             let ar: &Vec<Value> = get_val!(v, "ar")?;
 
             songs.push(SongInfo {
@@ -376,6 +434,7 @@ pub fn to_mix_detail(json: &Value) -> Result<PlayListDetail> {
                 pic_url: get_val!(v, "al", "picUrl").unwrap_or_default(),
                 duration: get_val!(v, "dt")?,
                 song_url: String::new(),
+                copyright: SongCopyright::from_privilege(p)?,
             });
         }
 
@@ -433,6 +492,7 @@ pub fn to_album_detail(json: &Value) -> Result<AlbumDetail> {
                 pic_url: pic_url.clone(),
                 duration: get_val!(v, "dt")?,
                 song_url: String::new(),
+                copyright: SongCopyright::from_privilege(get_val!(v, "privilege")?)?,
             });
         }
 
