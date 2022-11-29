@@ -240,6 +240,24 @@ impl PartialEq for SongInfo {
     }
 }
 
+pub fn to_song(v: &Value, privilege: &Value) -> Result<SongInfo> {
+    let unk = "unknown".to_string();
+    Ok(SongInfo {
+        id: get_val!(v, "id")?,
+        name: get_val!(v, "name")?,
+        singer: get_val!(@as &Vec<Value>, v, "ar")?
+            .get(0)
+            .map(|v: &Value| get_val!(v, "name").unwrap_or_else(|_| unk.clone()))
+            .unwrap_or_else(|| unk.clone()),
+        album: get_val!(v, "al", "name").unwrap_or_else(|_| unk.clone()),
+        album_id: get_val!(v, "al", "id")?,
+        pic_url: get_val!(v, "al", "picUrl").unwrap_or_default(),
+        duration: get_val!(v, "dt")?,
+        song_url: String::new(),
+        copyright: SongCopyright::from_privilege(privilege)?,
+    })
+}
+
 /// parse: 解析方式
 #[allow(unused)]
 pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
@@ -392,6 +410,59 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
     Err(anyhow!("none"))
 }
 
+#[allow(unused)]
+pub fn to_search_songs(json: &Value) -> Result<Vec<SongInfo>> {
+    let value = json;
+    let code: i64 = get_val!(value, "code")?;
+    if code == 200 {
+        // this key no effect(can get more), or may be use this as end?
+        // let song_count: i32 = get_val!(value, "result", "songCount")?;
+        let mut songs: Vec<SongInfo> = Vec::new();
+        let array: &Vec<Value> = get_val!(value, "result", "songs")?;
+        for v in array.iter() {
+            songs.push(to_song(v, get_val!(v, "privilege")?)?);
+        }
+        return Ok(songs);
+    }
+    Err(anyhow!("{}", code))
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SingerDetail {
+    pub id: u64,
+    pub name: String,
+    pub pic_url: String,
+    pub followed: bool,
+
+    pub album_size: u64,
+    pub music_size: u64, // all songs num
+    pub hot_songs: Vec<SongInfo>,
+}
+
+
+#[allow(unused)]
+pub fn to_singer_detail(json: &Value) -> Result<SingerDetail> {
+    let value = json;
+    let code: i64 = get_val!(value, "code")?;
+    if code == 200 {
+        let mut songs: Vec<SongInfo> = Vec::new();
+        let array: &Vec<Value> = get_val!(value, "hotSongs")?;
+        for v in array.iter() {
+            songs.push(to_song(v, get_val!(v, "privilege")?)?);
+        }
+        return Ok(SingerDetail {
+            id: get_val!(value, "artist", "id")?,
+            name: get_val!(value, "artist", "name")?,
+            pic_url: get_val!(value, "artist", "picUrl")?,
+            followed: get_val!(value, "artist", "followed")?,
+            album_size: get_val!(value, "artist", "albumSize")?,
+            music_size: get_val!(value, "artist", "musicSize")?,
+            hot_songs: songs,
+        });
+    }
+    Err(anyhow!("{}", code))
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PlayListDetail {
     pub id: u64,
@@ -406,36 +477,16 @@ pub struct PlayListDetail {
 }
 
 #[allow(unused)]
-pub fn to_mix_detail(json: &Value) -> Result<PlayListDetail> {
+pub fn to_playlist_detail(json: &Value) -> Result<PlayListDetail> {
     let value = json;
     let code: i64 = get_val!(value, "code")?;
     if code == 200 {
-        let unk = "unknown".to_string();
-
         let mut songs: Vec<SongInfo> = Vec::new();
         let list = vec![];
-        let mut array: &Vec<Value> = get_val!(value, "songs").unwrap_or(&list);
-        if array.is_empty() {
-            array = get_val!(value, "playlist", "tracks")?;
-        }
+        let mut array: &Vec<Value> = get_val!(value, "playlist", "tracks").unwrap_or(&list);
         let array_privilege: &Vec<Value> = get_val!(value, "privileges")?;
         for (v, p) in array.iter().zip(array_privilege.iter()) {
-            let ar: &Vec<Value> = get_val!(v, "ar")?;
-
-            songs.push(SongInfo {
-                id: get_val!(v, "id")?,
-                name: get_val!(v, "name")?,
-                singer: get_val!(@as &Vec<Value>, v, "ar")?
-                    .get(0)
-                    .map(|v: &Value| get_val!(v, "name").unwrap_or_else(|_| unk.clone()))
-                    .unwrap_or_else(|| unk.clone()),
-                album: get_val!(v, "al", "name").unwrap_or_else(|_| unk.clone()),
-                album_id: get_val!(v, "al", "id")?,
-                pic_url: get_val!(v, "al", "picUrl").unwrap_or_default(),
-                duration: get_val!(v, "dt")?,
-                song_url: String::new(),
-                copyright: SongCopyright::from_privilege(p)?,
-            });
+            songs.push(to_song(v, p)?);
         }
 
         return Ok(PlayListDetail {
@@ -476,24 +527,12 @@ pub fn to_album_detail(json: &Value) -> Result<AlbumDetail> {
         let name: String = get_val!(value, "album", "name")?;
         let pic_url: String = get_val!(value, "album", "picUrl")?;
 
-        let unk = "unknown".to_string();
         let mut songs: Vec<SongInfo> = Vec::new();
         let array: &Vec<Value> = get_val!(value, "songs")?;
         for v in array.iter() {
-            songs.push(SongInfo {
-                id: get_val!(v, "id")?,
-                name: get_val!(v, "name")?,
-                singer: get_val!(@as &Vec<Value>, v, "ar")?
-                    .get(0)
-                    .map(|v: &Value| get_val!(v, "name").unwrap_or_else(|_| unk.clone()))
-                    .unwrap_or_else(|| unk.clone()),
-                album: name.clone(),
-                album_id: id,
-                pic_url: pic_url.clone(),
-                duration: get_val!(v, "dt")?,
-                song_url: String::new(),
-                copyright: SongCopyright::from_privilege(get_val!(v, "privilege")?)?,
-            });
+            let mut song = to_song(v, get_val!(v, "privilege")?)?;
+            song.pic_url = pic_url.clone();
+            songs.push(song);
         }
 
         return Ok(AlbumDetail {
