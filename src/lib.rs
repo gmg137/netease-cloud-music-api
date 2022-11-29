@@ -442,7 +442,7 @@ impl MusicApi {
         let result = self
             .request(Method::Post, path, params, CryptoApi::Weapi, "", true)
             .await?;
-        to_mix_detail(&serde_json::from_str(&result)?)
+        to_playlist_detail(&serde_json::from_str(&result)?)
     }
 
     /// 歌曲详情
@@ -612,14 +612,35 @@ impl MusicApi {
         limit: u16,
     ) -> Result<String> {
         let path = "/weapi/search/get";
-        let mut params = HashMap::new();
-        let _types = types.to_string();
+        let mut params: HashMap<&str, &str> = HashMap::new();
+        let types = types.to_string();
         let offset = offset.to_string();
         let limit = limit.to_string();
-        params.insert("s", &keywords[..]);
-        params.insert("type", &_types[..]);
-        params.insert("offset", &offset[..]);
-        params.insert("limit", &limit[..]);
+        params.insert("s", &keywords);
+        params.insert("type", &types);
+        params.insert("offset", &offset);
+        params.insert("limit", &limit);
+        self.request(Method::Post, path, params, CryptoApi::Weapi, "", true)
+            .await
+    }
+
+    #[allow(unused)]
+    pub async fn cloudsearch(
+        &self,
+        keywords: String,
+        types: u32,
+        offset: u16,
+        limit: u16,
+    ) -> Result<String> {
+        let path = "/weapi/cloudsearch/get/web";
+        let mut params: HashMap<&str, &str> = HashMap::new();
+        let types = types.to_string();
+        let offset = offset.to_string();
+        let limit = limit.to_string();
+        params.insert("s", &keywords);
+        params.insert("type", &types);
+        params.insert("offset", &offset);
+        params.insert("limit", &limit);
         self.request(Method::Post, path, params, CryptoApi::Weapi, "", true)
             .await
     }
@@ -635,8 +656,8 @@ impl MusicApi {
         offset: u16,
         limit: u16,
     ) -> Result<Vec<SongInfo>> {
-        let result = self.search(keywords, 1, offset, limit).await?;
-        to_song_info(result, Parse::Search)
+        let result = self.cloudsearch(keywords, 1, offset, limit).await?;
+        to_search_songs(&serde_json::from_str(&result)?)
     }
 
     /// 搜索歌手
@@ -695,11 +716,11 @@ impl MusicApi {
         offset: u16,
         limit: u16,
     ) -> Result<Vec<SongInfo>> {
-        let result = self.search(keywords, 1006, offset, limit).await?;
-        to_song_info(result, Parse::Search)
+        let result = self.cloudsearch(keywords, 1006, offset, limit).await?;
+        to_search_songs(&serde_json::from_str(&result)?)
     }
 
-    /// 获取歌手单曲
+    /// 获取歌手信息/热门单曲
     /// id: 歌手 ID
     #[allow(unused)]
     pub async fn singer_songs(&self, id: u64) -> Result<Vec<SongInfo>> {
@@ -708,7 +729,7 @@ impl MusicApi {
         let result = self
             .request(Method::Post, &path, params, CryptoApi::Weapi, "", false)
             .await?;
-        to_song_info(result, Parse::Singer)
+        to_singer_detail(&serde_json::from_str(&result)?).map(|s| s.hot_songs)
     }
 
     /// 全部新碟
