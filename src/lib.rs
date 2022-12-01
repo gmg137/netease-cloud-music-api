@@ -720,16 +720,58 @@ impl MusicApi {
         to_search_songs(&serde_json::from_str(&result)?)
     }
 
-    /// 获取歌手信息/热门单曲
+    /// 获取歌手信息
     /// id: 歌手 ID
     #[allow(unused)]
-    pub async fn singer_songs(&self, id: u64) -> Result<Vec<SongInfo>> {
-        let path = format!("/weapi/v1/artist/{}", id);
-        let mut params = HashMap::new();
+    pub async fn singer_detail(&self, id: u64) -> Result<SingerDetail> {
+        let path = format!("/weapi/artist/head/info/get");
+        let mut params: HashMap<&str, &str> = HashMap::new();
+        let id = id.to_string();
+        params.insert("id", &id);
         let result = self
             .request(Method::Post, &path, params, CryptoApi::Weapi, "", false)
             .await?;
-        to_singer_detail(&serde_json::from_str(&result)?).map(|s| s.hot_songs)
+        to_singer_detail(&serde_json::from_str(&result)?)
+    }
+
+    /// 获取歌手热门歌曲
+    /// id: 歌手 ID
+    /// return: songs, more
+    #[allow(unused)]
+    pub async fn singer_top_songs(&self, id: u64) -> Result<(Vec<SongInfo>, bool)> {
+        let path = format!("/weapi/artist/top/song");
+        let mut params: HashMap<&str, &str> = HashMap::new();
+        let id = id.to_string();
+        params.insert("id", &id);
+        let result = self
+            .request(Method::Post, &path, params, CryptoApi::Weapi, "", false)
+            .await?;
+        to_singer_top_songs(&serde_json::from_str(&result)?)
+    }
+
+    /// 获取歌手专辑
+    /// id: 歌手 ID
+    /// offset: 起始点
+    /// limit: 数量
+    /// return: songlists, more
+    #[allow(unused)]
+    pub async fn singer_albums(
+        &self,
+        id: u64,
+        offset: u16,
+        limit: u16,
+    ) -> Result<(Vec<SongList>, bool)> {
+        let path = format!("/weapi/artist/albums/{}", id);
+        let mut params: HashMap<&str, &str> = HashMap::new();
+        let limit = limit.to_string();
+        let offset = offset.to_string();
+        params.insert("limit", &limit);
+        params.insert("offset", &offset);
+        params.insert("total", "true");
+        let result = self
+            .request(Method::Post, &path, params, CryptoApi::Weapi, "", false)
+            .await?;
+        to_singer_albums(&serde_json::from_str(&result)?)
     }
 
     /// 全部新碟
