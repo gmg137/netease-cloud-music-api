@@ -3,6 +3,7 @@
 // Copyright (C) 2019 gmg137 <gmg137@live.com>
 // Distributed under terms of the GPLv3 license.
 //
+use base64::{engine::general_purpose, Engine as _};
 use lazy_static::lazy_static;
 use openssl::hash::{hash, DigestBytes, MessageDigest};
 use openssl::rsa::{Padding, Rsa};
@@ -62,11 +63,11 @@ impl Crypto {
             .collect();
 
         let params1 = Crypto::aes_encrypt(text, &PRESET_KEY, cbc, Some(&*IV), |t: &Vec<u8>| {
-            base64::encode(t)
+            general_purpose::STANDARD.encode(t)
         });
 
         let params = Crypto::aes_encrypt(&params1, &key, cbc, Some(&*IV), |t: &Vec<u8>| {
-            base64::encode(t)
+            general_purpose::STANDARD.encode(t)
         });
 
         let enc_sec_key = Crypto::rsa_encrypt(
