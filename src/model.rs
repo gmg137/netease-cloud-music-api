@@ -59,7 +59,7 @@ impl<'a> DeVal<'a> for &'a Vec<Value> {
 
 impl<'a> DeVal<'a> for &'a Value {
     fn dval(v: &'a Value) -> Result<Self> {
-        return Ok(v);
+        Ok(v)
     }
 }
 
@@ -385,6 +385,24 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                     });
                 }
             }
+            Parse::Radio => {
+                let array: &Vec<Value> = get_val!(value, "programs")?;
+                let mut num = array.len();
+                for v in array.iter() {
+                    vec.push(SongInfo {
+                        id: get_val!(v, "mainTrackId")?,
+                        name: get_val!(v, "name")?,
+                        singer: format!("第 {} 期", num),
+                        album: get_val!(@as u64, v, "createTime")?.to_string(),
+                        album_id: 0,
+                        pic_url: get_val!(v, "coverUrl")?,
+                        duration: get_val!(v, "duration")?,
+                        song_url: String::new(),
+                        copyright: SongCopyright::Unknown,
+                    });
+                    num -= 1;
+                }
+            }
             _ => {}
         }
         return Ok(vec);
@@ -609,6 +627,17 @@ pub fn to_song_list(json: String, parse: Parse) -> Result<Vec<SongList>> {
                         author: get_val!(@as &Vec<Value>, v, "artists")?
                             .get(0)
                             .map_or(Ok(String::new()), |v: &Value| get_val!(v, "name"))?,
+                    });
+                }
+            }
+            Parse::Radio => {
+                let array: &Vec<Value> = get_val!(&value, "djRadios")?;
+                for v in array.iter() {
+                    vec.push(SongList {
+                        id: get_val!(v, "id")?,
+                        name: get_val!(v, "name")?,
+                        cover_img_url: get_val!(v, "picUrl")?,
+                        author: get_val!(v, "dj", "nickname")?,
                     });
                 }
             }
@@ -895,6 +924,7 @@ pub enum Method {
 /// LikeAlbum: 收藏的专辑
 /// TOP: 热门
 /// Singer: 歌手热门单曲
+/// Dj: 电台
 #[allow(unused)]
 #[derive(Debug, Clone)]
 pub enum Parse {
@@ -909,6 +939,7 @@ pub enum Parse {
     Album,
     Top,
     Singer,
+    Radio,
 }
 
 /// 客户端类型

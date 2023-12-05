@@ -1003,6 +1003,45 @@ impl MusicApi {
         }
         Ok(())
     }
+
+    /// 用户电台定阅列表
+    /// offset: 列表起点号
+    /// limit: 列表长度
+    #[allow(unused)]
+    pub async fn user_radio_sublist(&self, offset: u16, limit: u16) -> Result<Vec<SongList>> {
+        let path = "/weapi/djradio/get/subed";
+        let mut params = HashMap::new();
+        let offset = offset.to_string();
+        let limit = limit.to_string();
+        params.insert("total", "true");
+        params.insert("offset", offset.as_str());
+        params.insert("limit", limit.as_str());
+        let result = self
+            .request(Method::Post, path, params, CryptoApi::Weapi, "", true)
+            .await?;
+        to_song_list(result, Parse::Radio)
+    }
+
+    /// 电台节目列表
+    /// rid: 电台ID
+    /// offset: 列表起点号
+    /// limit: 列表长度
+    #[allow(unused)]
+    pub async fn radio_program(&self, rid: u64, offset: u16, limit: u16) -> Result<Vec<SongInfo>> {
+        let path = "/weapi/dj/program/byradio";
+        let mut params = HashMap::new();
+        let id = rid.to_string();
+        let offset = offset.to_string();
+        let limit = limit.to_string();
+        params.insert("radioId", id.as_str());
+        params.insert("offset", offset.as_str());
+        params.insert("limit", limit.as_str());
+        params.insert("asc", "false");
+        let result = self
+            .request(Method::Post, path, params, CryptoApi::Weapi, "", true)
+            .await?;
+        to_song_info(result, Parse::Radio)
+    }
 }
 
 fn choose_user_agent(ua: &str) -> &str {
