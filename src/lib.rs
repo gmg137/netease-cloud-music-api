@@ -110,8 +110,8 @@ impl MusicApi {
             let client = HttpClient::builder()
                 .timeout(Duration::from_secs(TIMEOUT))
                 .proxy(Some(proxy.parse()?))
-                .cookie_jar(cookie_jar.to_owned())
                 .cookies()
+                .cookie_jar(cookie_jar.to_owned())
                 .build()
                 .expect("初始化网络请求失败!");
             self.client = client;
