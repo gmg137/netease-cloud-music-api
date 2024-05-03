@@ -872,7 +872,7 @@ impl MusicApi {
     /// 查询歌词
     /// music_id: 歌曲id
     #[allow(unused)]
-    pub async fn song_lyric(&self, music_id: u64) -> Result<Vec<String>> {
+    pub async fn song_lyric(&self, music_id: u64) -> Result<Lyrics> {
         let csrf_token = self.csrf.borrow().to_owned();
         let path = "/weapi/song/lyric";
         let mut params = HashMap::new();

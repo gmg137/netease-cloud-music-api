@@ -83,21 +83,39 @@ macro_rules! get_val {
     };
 }
 
+/// 歌词
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Lyrics {
+    /// 歌词
+    pub lyric: Vec<String>,
+    /// 歌词翻译
+    pub tlyric: Vec<String>,
+}
+
 #[allow(unused)]
-pub fn to_lyric(json: String) -> Result<Vec<String>> {
+pub fn to_lyric(json: String) -> Result<Lyrics> {
     let value = &serde_json::from_str::<Value>(&json)?;
     let code: i64 = get_val!(value, "code")?;
     if code == 200 {
-        let mut vec: Vec<String> = Vec::new();
-        let lyric: String = get_val!(value, "lrc", "lyric")?;
-        vec = lyric
+        let mut lyric: Vec<String> = Vec::new();
+        let lrc: String = get_val!(value, "lrc", "lyric")?;
+        lyric = lrc
             .split('\n')
             .collect::<Vec<&str>>()
             .iter()
             .map(|s| (*s).to_string())
             .filter(|s| !s.is_empty())
             .collect::<Vec<String>>();
-        return Ok(vec);
+        let lrc: String = get_val!(value, "tlyric", "lyric")?;
+        let mut tlyric: Vec<String> = Vec::new();
+        tlyric = lrc
+            .split('\n')
+            .collect::<Vec<&str>>()
+            .iter()
+            .map(|s| (*s).to_string())
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<String>>();
+        return Ok(Lyrics { lyric, tlyric });
     }
     Err(anyhow!("none"))
 }
