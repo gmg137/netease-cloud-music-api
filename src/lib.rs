@@ -699,7 +699,7 @@ impl MusicApi {
         to_song_info(result, Parse::Search)
     }
 
-    /// 获取歌手单曲
+    /// 获取歌手热门单曲
     /// id: 歌手 ID
     #[allow(unused)]
     pub async fn singer_songs(&self, id: u64) -> Result<Vec<SongInfo>> {
@@ -709,6 +709,38 @@ impl MusicApi {
             .request(Method::Post, &path, params, CryptoApi::Weapi, "", false)
             .await?;
         to_song_info(result, Parse::Singer)
+    }
+
+    /// 获取歌手全部单曲
+    /// id: 歌手 ID
+    /// order: 排序方式:
+    //	      "hot": 热门
+    ///       "time": 时间
+    /// offset: 起始点
+    /// limit: 数量
+    #[allow(unused)]
+    pub async fn singer_all_songs(
+        &self,
+        id: u64,
+        order: &str,
+        offset: u16,
+        limit: u16,
+    ) -> Result<Vec<SongInfo>> {
+        let path = "/weapi/v1/artist/songs";
+        let mut params = HashMap::new();
+        let id = id.to_string();
+        let offset = offset.to_string();
+        let limit = limit.to_string();
+        params.insert("id", &id[..]);
+        params.insert("private_cloud", "true");
+        params.insert("work_type", "1");
+        params.insert("order", order);
+        params.insert("offset", &offset[..]);
+        params.insert("limit", &limit[..]);
+        let result = self
+            .request(Method::Post, path, params, CryptoApi::Weapi, "", false)
+            .await?;
+        to_song_info(result, Parse::SingerSongs)
     }
 
     /// 全部新碟
