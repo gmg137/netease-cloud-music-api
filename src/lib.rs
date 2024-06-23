@@ -990,7 +990,13 @@ impl MusicApi {
     /// 获取首页轮播图
     #[allow(unused)]
     pub async fn banners(&self) -> Result<Vec<BannersInfo>> {
-        to_banners_info(self.homepage(ClientType::Iphone).await?)
+        let path = "/weapi/v2/banner/get";
+        let mut params = HashMap::new();
+        params.insert("clientType", "pc");
+        let result = self
+            .request(Method::Post, path, params, CryptoApi::Weapi, "", true)
+            .await?;
+        to_banners_info(result)
     }
 
     /// 从网络下载图片

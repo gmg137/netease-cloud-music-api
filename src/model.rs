@@ -776,20 +776,10 @@ pub fn to_login_info(json: String) -> Result<LoginInfo> {
 pub struct BannersInfo {
     /// 轮播图
     pub pic: String,
-    /// 歌曲 id
-    pub id: u64,
-    /// 歌名
-    pub name: String,
-    /// 歌手
-    pub singer: String,
-    /// 专辑
-    pub album: String,
-    /// 专辑ID
-    pub album_id: u64,
-    /// 专辑封面
-    pub pic_url: String,
-    /// 时长
-    pub duration: u64,
+    /// 内容 id
+    pub target_id: u64,
+    /// 内容类型
+    pub target_type: TargetType,
 }
 
 #[allow(unused)]
@@ -797,37 +787,17 @@ pub fn to_banners_info(json: String) -> Result<Vec<BannersInfo>> {
     let value = &serde_json::from_str::<Value>(&json)?;
     let code: i32 = get_val!(value, "code")?;
     if code == 200 {
-        let array: &Vec<Value> = get_val!(value, "data", "blocks")?;
+        let array: &Vec<Value> = get_val!(value, "banners")?;
+        let mut vec: Vec<BannersInfo> = Vec::new();
         for v in array.iter() {
-            let show_type: String = get_val!(v, "showType")?;
-            if show_type.eq("BANNER") {
-                let mut vec: Vec<BannersInfo> = Vec::new();
-                let banners: &Vec<Value> = get_val!(v, "extInfo", "banners")?;
-                for v in banners.iter() {
-                    if get_val!(@as String, v, "typeTitle")?.eq("新歌首发") {
-                        if let Some(song) = v.get("song") {
-                            if song.is_null() {
-                                continue;
-                            }
-                            vec.push(BannersInfo {
-                                pic: get_val!(v, "pic")?,
-                                name: get_val!(song, "name")?,
-                                id: get_val!(song, "id")?,
-                                singer: get_val!(@as &Vec<Value>, song, "ar")?
-                                    .first()
-                                    .map_or(Ok(String::new()), |v: &Value| get_val!(v, "name"))?,
-                                album: get_val!(song, "al", "name")?,
-                                album_id: get_val!(song, "al", "id")?,
-                                pic_url: get_val!(song, "al", "picUrl")?,
-                                duration: get_val!(song, "dt")?,
-                            });
-                        }
-                    };
-                }
-                return Ok(vec);
-                break;
-            }
+            let bi: BannersInfo = BannersInfo {
+                pic: get_val!(v, "imageUrl")?,
+                target_id: get_val!(v, "targetId")?,
+                target_type: TargetType::from(get_val!(@as i32, v, "targetType")?),
+            };
+            vec.push(bi);
         }
+        return Ok(vec);
     }
     Err(anyhow!("none"))
 }
@@ -988,6 +958,25 @@ pub enum ClientType {
     Android,
     Iphone,
     Ipad,
+}
+
+/// 轮播内容类型
+#[allow(unused)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub enum TargetType {
+    Song,
+    Album,
+    Unknown,
+}
+
+impl From<i32> for TargetType {
+    fn from(t: i32) -> Self {
+        match t {
+            1 => Self::Song,
+            10 => Self::Album,
+            _ => Self::Unknown,
+        }
+    }
 }
 
 impl fmt::Display for ClientType {
