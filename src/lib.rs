@@ -1080,6 +1080,26 @@ impl MusicApi {
             .await?;
         to_song_info(result, Parse::Radio)
     }
+
+    /// 心动模式/智能播放
+    /// song_id: 歌曲ID
+    /// playlist_id: 歌单ID
+    #[allow(unused)]
+    pub async fn playmode_intelligence_list(&self, sid: u64, pid: u64) -> Result<Vec<SongInfo>> {
+        let path = "/weapi/playmode/intelligence/list";
+        let mut params = HashMap::new();
+        let id = sid.to_string();
+        let pid = pid.to_string();
+        params.insert("songId", id.as_str());
+        params.insert("type", "fromPlayOne");
+        params.insert("playlistId", pid.as_str());
+        params.insert("startMusicId", id.as_str());
+        params.insert("count", "1");
+        let result = self
+            .request(Method::Post, path, params, CryptoApi::Weapi, "", true)
+            .await?;
+        to_song_info(result, Parse::Intelligence)
+    }
 }
 
 fn choose_user_agent(ua: &str) -> &str {
