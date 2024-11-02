@@ -743,6 +743,10 @@ pub struct LoginInfo {
     pub nickname: String,
     /// 用户头像
     pub avatar_url: String,
+    /// VIP 等级
+    /// 0 : 普通用户
+    /// 11: 黑胶7
+    pub vip_type: i32,
     /// 状态消息
     pub msg: String,
 }
@@ -757,6 +761,7 @@ pub fn to_login_info(json: String) -> Result<LoginInfo> {
             uid: get_val!(value, "profile", "userId")?,
             nickname: get_val!(value, "profile", "nickname")?,
             avatar_url: get_val!(value, "profile", "avatarUrl")?,
+            vip_type: get_val!(value, "profile", "vipType")?,
             msg: "".to_owned(),
         });
     }
@@ -767,6 +772,7 @@ pub fn to_login_info(json: String) -> Result<LoginInfo> {
         uid: 0,
         nickname: "".to_owned(),
         avatar_url: "".to_owned(),
+        vip_type: 0,
         msg,
     })
 }
