@@ -12,7 +12,7 @@ use isahc::{prelude::*, *};
 use lazy_static::lazy_static;
 pub use model::*;
 use regex::Regex;
-use std::{cell::RefCell, collections::HashMap, path::PathBuf, time::Duration};
+use std::{cell::RefCell, collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 use urlqstring::QueryParams;
 
 lazy_static! {
@@ -46,7 +46,7 @@ const USER_AGENT_LIST: [&str; 14] = [
 #[derive(Clone)]
 pub struct MusicApi {
     client: HttpClient,
-    csrf: RefCell<String>,
+    csrf: RefCell<Arc<String>>,
 }
 
 #[allow(unused)]
@@ -73,7 +73,7 @@ impl MusicApi {
             .expect("初始化网络请求失败!");
         Self {
             client,
-            csrf: RefCell::new(String::new()),
+            csrf: RefCell::new(Arc::new(String::new())),
         }
     }
 
@@ -88,7 +88,7 @@ impl MusicApi {
             .expect("初始化网络请求失败!");
         Self {
             client,
-            csrf: RefCell::new(String::new()),
+            csrf: RefCell::new(Arc::new(String::new())),
         }
     }
 
@@ -148,8 +148,8 @@ impl MusicApi {
             if let Some(cookies) = self.cookie_jar() {
                 let uri = BASE_URL.parse().unwrap();
                 if let Some(cookie) = cookies.get_by_name(&uri, "__csrf") {
-                    let __csrf = cookie.value().to_string();
-                    self.csrf.replace(__csrf.to_owned());
+                    let __csrf = Arc::new(cookie.value().to_string());
+                    self.csrf.replace(__csrf.clone());
                     csrf = __csrf;
                 }
             }
@@ -1118,11 +1118,19 @@ fn choose_user_agent(ua: &str) -> &str {
 #[cfg(test)]
 mod tests {
 
+    use std::thread;
+
     use super::*;
 
     #[async_std::test]
     async fn test() {
         let api = MusicApi::default();
         assert!(api.banners().await.is_ok());
+    }
+
+    #[async_std::test]
+    async fn music_api_send() {
+        let api = MusicApi::default();
+        thread::spawn(|| api);
     }
 }
