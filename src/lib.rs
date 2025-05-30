@@ -12,7 +12,7 @@ use isahc::{prelude::*, *};
 use lazy_static::lazy_static;
 pub use model::*;
 use regex::Regex;
-use std::{cell::RefCell, collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
+use std::{collections::HashMap, path::PathBuf, sync::OnceLock, time::Duration};
 use urlqstring::QueryParams;
 
 lazy_static! {
@@ -46,7 +46,7 @@ const USER_AGENT_LIST: [&str; 14] = [
 #[derive(Clone)]
 pub struct MusicApi {
     client: HttpClient,
-    csrf: RefCell<Arc<String>>,
+    csrf: OnceLock<String>,
 }
 
 #[allow(unused)]
@@ -73,7 +73,7 @@ impl MusicApi {
             .expect("初始化网络请求失败!");
         Self {
             client,
-            csrf: RefCell::new(Arc::new(String::new())),
+            csrf: OnceLock::new(),
         }
     }
 
@@ -88,7 +88,7 @@ impl MusicApi {
             .expect("初始化网络请求失败!");
         Self {
             client,
-            csrf: RefCell::new(Arc::new(String::new())),
+            csrf: OnceLock::new(),
         }
     }
 
@@ -143,17 +143,22 @@ impl MusicApi {
         ua: &str,
         append_csrf: bool,
     ) -> Result<String> {
-        let mut csrf = self.csrf.borrow().to_owned();
-        if csrf.is_empty() {
-            if let Some(cookies) = self.cookie_jar() {
-                let uri = BASE_URL.parse().unwrap();
-                if let Some(cookie) = cookies.get_by_name(&uri, "__csrf") {
-                    let __csrf = Arc::new(cookie.value().to_string());
-                    self.csrf.replace(__csrf.clone());
-                    csrf = __csrf;
+        let empty = String::new();
+        let csrf = match self.csrf.get() {
+            Some(str) => str.clone(),
+            None => {
+                if let Some(cookies) = self.cookie_jar() {
+                    let uri = BASE_URL.parse().unwrap();
+                    if let Some(cookie) = cookies.get_by_name(&uri, "__csrf") {
+                        let str = cookie.value();
+                        if !str.is_empty() {
+                            self.csrf.get_or_init(|| str.to_string());
+                        }
+                    }
                 }
+                self.csrf.get().unwrap_or(&empty).clone()
             }
-        }
+        };
         let mut url = format!("{}{}?csrf_token={}", BASE_URL, path, csrf);
         if !append_csrf {
             url = format!("{}{}", BASE_URL, path);
@@ -429,7 +434,8 @@ impl MusicApi {
     /// songlist_id: 歌单 id
     #[allow(unused)]
     pub async fn song_list_detail(&self, songlist_id: u64) -> Result<PlayListDetail> {
-        let csrf_token = self.csrf.borrow().to_owned();
+        let empty = String::new();
+        let csrf_token = self.csrf.get().unwrap_or(&empty);
         let path = "/weapi/v6/playlist/detail";
         let mut params = HashMap::new();
         let songlist_id = songlist_id.to_string();
@@ -438,7 +444,7 @@ impl MusicApi {
         params.insert("total", "true");
         params.insert("limit", "1000");
         params.insert("n", "1000");
-        params.insert("csrf_token", &csrf_token);
+        params.insert("csrf_token", csrf_token);
         let result = self
             .request(Method::Post, path, params, CryptoApi::Weapi, "", true)
             .await?;
@@ -905,14 +911,15 @@ impl MusicApi {
     /// music_id: 歌曲id
     #[allow(unused)]
     pub async fn song_lyric(&self, music_id: u64) -> Result<Lyrics> {
-        let csrf_token = self.csrf.borrow().to_owned();
+        let empty = String::new();
+        let csrf_token = self.csrf.get().unwrap_or(&empty);
         let path = "/weapi/song/lyric";
         let mut params = HashMap::new();
         let id = music_id.to_string();
         params.insert("id", &id[..]);
         params.insert("lv", "-1");
         params.insert("tv", "-1");
-        params.insert("csrf_token", &csrf_token);
+        params.insert("csrf_token", csrf_token);
         let result = self
             .request(Method::Post, path, params, CryptoApi::Weapi, "", true)
             .await?;
@@ -1118,8 +1125,6 @@ fn choose_user_agent(ua: &str) -> &str {
 #[cfg(test)]
 mod tests {
 
-    use std::thread;
-
     use super::*;
 
     #[async_std::test]
@@ -1128,9 +1133,11 @@ mod tests {
         assert!(api.banners().await.is_ok());
     }
 
+    fn require_sync<T: Sync>(_: T) {}
+
     #[async_std::test]
     async fn music_api_send() {
         let api = MusicApi::default();
-        thread::spawn(|| api);
+        require_sync(api);
     }
 }
