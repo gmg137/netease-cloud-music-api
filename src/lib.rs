@@ -15,6 +15,21 @@ use regex::Regex;
 use std::{collections::HashMap, path::PathBuf, sync::OnceLock, time::Duration};
 use urlqstring::QueryParams;
 
+#[derive(Debug, Clone, Copy)]
+enum EapiPath {
+    SongUrl,
+    SongUrlV1,
+}
+
+impl EapiPath {
+    fn sign_path(self) -> &'static str {
+        match self {
+            Self::SongUrl => "/api/song/enhance/player/url",
+            Self::SongUrlV1 => "/api/song/enhance/player/url/v1",
+        }
+    }
+}
+
 lazy_static! {
     static ref _CSRF: Regex = Regex::new(r"_csrf=(?P<csrf>[^(;|$)]+)").unwrap();
 }
@@ -143,6 +158,20 @@ impl MusicApi {
         ua: &str,
         append_csrf: bool,
     ) -> Result<String> {
+        self.request_with_eapi_path(method, path, params, cryptoapi, ua, append_csrf, EapiPath::SongUrl)
+            .await
+    }
+
+    async fn request_with_eapi_path(
+        &self,
+        method: Method,
+        path: &str,
+        params: HashMap<&str, &str>,
+        cryptoapi: CryptoApi,
+        ua: &str,
+        append_csrf: bool,
+        eapi_path: EapiPath,
+    ) -> Result<String> {
         let empty = String::new();
         let csrf = match self.csrf.get() {
             Some(str) => str.clone(),
@@ -188,10 +217,7 @@ impl MusicApi {
                         let mut params = params;
                         params.insert("csrf_token", &csrf);
                         url = path.to_string();
-                        Crypto::eapi(
-                            "/api/song/enhance/player/url",
-                            &QueryParams::from_map(params).json(),
-                        )
+                        Crypto::eapi(eapi_path.sign_path(), &QueryParams::from_map(params).json())
                     }
                 };
 
@@ -501,6 +527,46 @@ impl MusicApi {
         params.insert("br", br);
         let result = self
             .request(Method::Post, path, params, CryptoApi::Eapi, "", true)
+            .await?;
+        to_song_url(result)
+    }
+
+    #[allow(unused)]
+    pub async fn songs_url_v1(
+        &self,
+        ids: &[u64],
+        level: SongQuality,
+    ) -> Result<Vec<SongUrl>> {
+        let path = "https://interface3.music.163.com/eapi/song/enhance/player/url/v1";
+        let mut params = HashMap::new();
+        let ids = serde_json::to_string(ids)?;
+        let level_value = level.as_level().to_string();
+        let encode_type = if matches!(level, SongQuality::Standard | SongQuality::Higher | SongQuality::Extreme) {
+            "aac".to_string()
+        } else {
+            "flac".to_string()
+        };
+        params.insert("ids", ids.as_str());
+        params.insert("level", level_value.as_str());
+        params.insert("encodeType", encode_type.as_str());
+        let immerse_type = if matches!(level, SongQuality::AudioVivid) {
+            Some("c51")
+        } else {
+            None
+        };
+        if let Some(immerse_type) = immerse_type {
+            params.insert("immerseType", immerse_type);
+        }
+        let result = self
+            .request_with_eapi_path(
+                Method::Post,
+                path,
+                params,
+                CryptoApi::Eapi,
+                "",
+                true,
+                EapiPath::SongUrlV1,
+            )
             .await?;
         to_song_url(result)
     }
