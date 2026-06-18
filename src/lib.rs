@@ -12,7 +12,12 @@ use isahc::{prelude::*, *};
 use lazy_static::lazy_static;
 pub use model::*;
 use regex::Regex;
-use std::{collections::HashMap, path::PathBuf, sync::OnceLock, time::Duration};
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::OnceLock,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 use urlqstring::QueryParams;
 
 lazy_static! {
@@ -187,21 +192,60 @@ impl MusicApi {
                     CryptoApi::Eapi => {
                         let mut params = params;
                         params.insert("csrf_token", &csrf);
-                        url = path.to_string();
-                        Crypto::eapi(
-                            "/api/song/enhance/player/url",
-                            &QueryParams::from_map(params).json(),
-                        )
+
+                        let api_path = path.replacen("/api", "/eapi", 1);
+                        url = format!("https://interface.music.163.com{}", api_path);
+
+                        let data_json = QueryParams::from_map(params).json();
+                        let mut data: serde_json::Value =
+                            serde_json::from_str(&data_json).unwrap_or(serde_json::Value::Null);
+
+                        let now_ms = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap()
+                            .as_millis();
+                        let buildver = now_ms.to_string();
+                        let buildver = &buildver[..buildver.len().min(10)];
+                        let request_id = format!("{}_{:04}", now_ms, rand::random::<u16>() % 1000);
+
+                        if let serde_json::Value::Object(ref mut map) = data {
+                            map.insert(
+                                "header".to_string(),
+                                serde_json::json!({
+                                    "osver": "16.2",
+                                    "deviceId": "",
+                                    "os": "iPhone OS",
+                                    "appver": "9.0.90",
+                                    "versioncode": "140",
+                                    "mobilename": "",
+                                    "buildver": buildver,
+                                    "resolution": "1920x1080",
+                                    "__csrf": csrf,
+                                    "channel": "",
+                                    "requestId": request_id,
+                                }),
+                            );
+                        }
+
+                        Crypto::eapi(path, &data.to_string())
                     }
                 };
 
+                let host = match cryptoapi {
+                    CryptoApi::Eapi => "interface.music.163.com",
+                    _ => "music.163.com",
+                };
+                let cookie = match cryptoapi {
+                    CryptoApi::Eapi => "os=iphone; appver=9.0.90",
+                    _ => "os=pc; appver=2.7.1.198277",
+                };
                 let request = Request::post(&url)
-                    .header("Cookie", "os=pc; appver=2.7.1.198277")
+                    .header("Cookie", cookie)
                     .header("Accept", "*/*")
                     .header("Accept-Language", "en-US,en;q=0.5")
                     .header("Connection", "keep-alive")
                     .header("Content-Type", "application/x-www-form-urlencoded")
-                    .header("Host", "music.163.com")
+                    .header("Host", host)
                     .header("Referer", "https://music.163.com")
                     .header("User-Agent", user_agent)
                     .body(body)
@@ -480,21 +524,7 @@ impl MusicApi {
     ///    hr: 1900000
     #[allow(unused)]
     pub async fn songs_url(&self, ids: &[u64], br: &str) -> Result<Vec<SongUrl>> {
-        // 使用 WEBAPI 获取音乐
-        // let csrf_token = self.csrf.borrow().to_owned();
-        // let path = "/weapi/song/enhance/player/url/v1";
-        // let mut params = HashMap::new();
-        // let ids = serde_json::to_string(ids)?;
-        // params.insert("ids", ids.as_str());
-        // params.insert("level", "standard");
-        // params.insert("encodeType", "aac");
-        // params.insert("csrf_token", &csrf_token);
-        // let result = self
-        //     .request(Method::Post, path, params, CryptoApi::Weapi, "")
-        //     .await?;
-
-        // 使用 Eapi 获取音乐
-        let path = "https://interface3.music.163.com/eapi/song/enhance/player/url";
+        let path = "/api/song/enhance/player/url";
         let mut params = HashMap::new();
         let ids = serde_json::to_string(ids)?;
         params.insert("ids", ids.as_str());
@@ -525,9 +555,9 @@ impl MusicApi {
     /// 每日推荐歌曲
     #[allow(unused)]
     pub async fn recommend_songs(&self) -> Result<Vec<SongInfo>> {
-        let path = "/weapi/v2/discovery/recommend/songs";
+        let path = "/weapi/v3/discovery/recommend/songs";
         let mut params = HashMap::new();
-        params.insert("total", "ture");
+        params.insert("afresh", "false");
         let result = self
             .request(Method::Post, path, params, CryptoApi::Weapi, "", true)
             .await?;

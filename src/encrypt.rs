@@ -3,11 +3,15 @@
 // Copyright (C) 2019 gmg137 <gmg137@live.com>
 // Distributed under terms of the GPLv3 license.
 //
+use anyhow::{anyhow, Result};
 use base64::{engine::general_purpose, Engine as _};
+use flate2::read::GzDecoder;
 use lazy_static::lazy_static;
 use openssl::hash::{hash, DigestBytes, MessageDigest};
 use openssl::rsa::{Padding, Rsa};
-use openssl::symm::{encrypt, Cipher};
+use openssl::symm::{decrypt, encrypt, Cipher};
+use regex::Regex;
+use std::io::Read;
 use urlqstring::QueryParams;
 use AesMode::{cbc, ecb};
 
@@ -46,10 +50,68 @@ impl Crypto {
         let message = format!("nobody{}use{}md5forencrypt", url, text);
         let digest = hex::encode(hash(MessageDigest::md5(), message.as_bytes()).unwrap());
         let data = format!("{}-36cd479b6b5-{}-36cd479b6b5-{}", url, text, digest);
-        let params = Crypto::aes_encrypt(&data, &EAPIKEY, ecb, Some(&*IV), |t: &Vec<u8>| {
+        let params = Crypto::aes_encrypt(&data, &EAPIKEY, ecb, None, |t: &Vec<u8>| {
             hex::encode_upper(t)
         });
         QueryParams::from(vec![("params", params.as_str())]).stringify()
+    }
+
+    pub fn aes_decrypt(
+        data: &[u8],
+        key: &[u8],
+        mode: AesMode,
+        iv: Option<&[u8]>,
+    ) -> Result<Vec<u8>> {
+        let cipher = match mode {
+            cbc => Cipher::aes_128_cbc(),
+            ecb => Cipher::aes_128_ecb(),
+        };
+        decrypt(cipher, key, iv, data).map_err(|_| anyhow!("aes decrypt failed"))
+    }
+
+    pub fn eapi_res_decrypt(encrypted_params: &str, aeapi: bool) -> Result<String> {
+        let encrypted_bytes =
+            hex::decode(encrypted_params).map_err(|_| anyhow!("hex decode failed"))?;
+        let mut decrypted = Crypto::aes_decrypt(&encrypted_bytes, &EAPIKEY, ecb, None)?;
+
+        let pad_len = decrypted[decrypted.len() - 1] as usize;
+        decrypted.truncate(decrypted.len() - pad_len);
+
+        if aeapi {
+            let decoded = general_purpose::STANDARD
+                .decode(&decrypted)
+                .map_err(|_| anyhow!("base64 decode failed"))?;
+            let mut decoder = GzDecoder::new(&decoded[..]);
+            let mut result = String::new();
+            decoder
+                .read_to_string(&mut result)
+                .map_err(|_| anyhow!("gzip decompress failed"))?;
+            Ok(result)
+        } else {
+            String::from_utf8(decrypted).map_err(|_| anyhow!("utf8 decode failed"))
+        }
+    }
+
+    pub fn eapi_req_decrypt(encrypted_params: &str) -> Result<(String, String)> {
+        let encrypted_bytes =
+            hex::decode(encrypted_params).map_err(|_| anyhow!("hex decode failed"))?;
+        let mut decrypted = Crypto::aes_decrypt(&encrypted_bytes, &EAPIKEY, ecb, None)?;
+
+        let pad_len = decrypted[decrypted.len() - 1] as usize;
+        decrypted.truncate(decrypted.len() - pad_len);
+
+        let text =
+            String::from_utf8(decrypted).map_err(|_| anyhow!("utf8 decode failed"))?;
+
+        let re =
+            Regex::new(r"(.*?)-36cd479b6b5-(.*?)-36cd479b6b5-(.*)").map_err(|_| anyhow!("regex error"))?;
+        if let Some(caps) = re.captures(&text) {
+            let url = caps.get(1).unwrap().as_str().to_string();
+            let data = caps.get(2).unwrap().as_str().to_string();
+            Ok((url, data))
+        } else {
+            Err(anyhow!("eapi_req_decrypt: invalid format"))
+        }
     }
 
     pub fn weapi(text: &str) -> String {
@@ -128,4 +190,5 @@ impl Crypto {
             HashType::md5 => encode(hash(MessageDigest::md5(), data.as_bytes()).unwrap()),
         }
     }
+
 }

@@ -17,6 +17,7 @@ openssl = "*"
 anyhow = "*"
 hex = "*"
 base64 = "*"
+flate2 = "*"
 
 [dev-dependencies]
 async-std = { features = ["attributes"], version = "*" }

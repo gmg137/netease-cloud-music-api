@@ -335,14 +335,14 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                     vec.push(SongInfo {
                         id: get_val!(v, "id")?,
                         name: get_val!(v, "name")?,
-                        singer: get_val!(@as &Vec<Value>, v, "artists")?
+                        singer: get_val!(@as &Vec<Value>, v, "ar")?
                             .first()
                             .map(|v: &Value| get_val!(v, "name").unwrap_or_else(|_| unk.clone()))
                             .unwrap_or_else(|| unk.clone()),
-                        album: get_val!(v, "album", "name").unwrap_or_else(|_| unk.clone()),
-                        album_id: get_val!(v, "album", "id")?,
-                        pic_url: get_val!(v, "album", "picUrl").unwrap_or_default(),
-                        duration: get_val!(v, "duration")?,
+                        album: get_val!(v, "al", "name").unwrap_or_else(|_| unk.clone()),
+                        album_id: get_val!(v, "al", "id")?,
+                        pic_url: get_val!(v, "al", "picUrl").unwrap_or_default(),
+                        duration: get_val!(v, "dt")?,
                         song_url: String::new(),
                         copyright: SongCopyright::Unknown,
                     });
