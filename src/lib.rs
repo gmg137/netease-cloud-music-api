@@ -535,6 +535,35 @@ impl MusicApi {
         to_song_url(result)
     }
 
+    /// 歌曲 URL v1 (基于音质等级)
+    /// ids: 歌曲列表
+    /// level: 音质等级 (Standard, Higher, Extreme, Lossless, HiRes, Surround, AudioVivid, Master)
+    #[allow(unused)]
+    pub async fn songs_url_v1(&self, ids: &[u64], level: SongQuality) -> Result<Vec<SongUrl>> {
+        let path = "/api/song/enhance/player/url/v1";
+        let mut params = HashMap::new();
+        let ids = serde_json::to_string(ids)?;
+        let level_value = level.as_level().to_string();
+        let encode_type = if matches!(
+            level,
+            SongQuality::Standard | SongQuality::Higher | SongQuality::Extreme
+        ) {
+            "aac".to_string()
+        } else {
+            "flac".to_string()
+        };
+        params.insert("ids", &ids[..]);
+        params.insert("level", &level_value[..]);
+        params.insert("encodeType", &encode_type[..]);
+        if matches!(level, SongQuality::AudioVivid) {
+            params.insert("immerseType", "c51");
+        }
+        let result = self
+            .request(Method::Post, path, params, CryptoApi::Eapi, "", true)
+            .await?;
+        to_song_url(result)
+    }
+
     /// 每日推荐歌单
     #[allow(unused)]
     pub async fn recommend_resource(&self) -> Result<Vec<SongList>> {
@@ -1160,6 +1189,11 @@ mod tests {
     #[async_std::test]
     async fn test() {
         let api = MusicApi::default();
+        dbg!(api.songs_url(&[1908049566], "320000").await.unwrap());
+        dbg!(api
+            .songs_url_v1(&[1908049566], SongQuality::Standard)
+            .await
+            .unwrap());
         assert!(api.banners().await.is_ok());
     }
 

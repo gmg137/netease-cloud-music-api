@@ -154,6 +154,62 @@ pub fn to_singer_info(json: String) -> Result<Vec<SingerInfo>> {
     Err(anyhow!("none"))
 }
 
+/// 音质等级
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum SongQuality {
+    #[default]
+    Standard,
+    Higher,
+    Extreme,
+    Lossless,
+    HiRes,
+    Surround,
+    AudioVivid,
+    Master,
+}
+
+impl SongQuality {
+    pub fn as_level(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::Higher => "higher",
+            Self::Extreme => "exhigh",
+            Self::Lossless => "lossless",
+            Self::HiRes => "hires",
+            Self::Surround => "jyeffect",
+            Self::AudioVivid => "sky",
+            Self::Master => "jymaster",
+        }
+    }
+
+    pub fn from_level(level: &str) -> Option<Self> {
+        match level {
+            "standard" => Some(Self::Standard),
+            "higher" => Some(Self::Higher),
+            "exhigh" => Some(Self::Extreme),
+            "lossless" => Some(Self::Lossless),
+            "hires" => Some(Self::HiRes),
+            "jyeffect" => Some(Self::Surround),
+            "sky" => Some(Self::AudioVivid),
+            "jymaster" => Some(Self::Master),
+            _ => None,
+        }
+    }
+
+    pub fn from_rate(rate: u32) -> Self {
+        match rate {
+            0..=128000 => Self::Standard,
+            128001..=192000 => Self::Higher,
+            192001..=320000 => Self::Extreme,
+            320001..=999000 => Self::Lossless,
+            999001..=1900000 => Self::HiRes,
+            1900001..=2695683 => Self::Surround,
+            2695684..=4532510 => Self::AudioVivid,
+            _ => Self::Master,
+        }
+    }
+}
+
 /// 歌曲 URL
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SongUrl {
@@ -163,6 +219,8 @@ pub struct SongUrl {
     pub url: String,
     /// 码率
     pub rate: u32,
+    /// 音质等级
+    pub quality: SongQuality,
 }
 
 #[allow(unused)]
@@ -175,10 +233,15 @@ pub fn to_song_url(json: String) -> Result<Vec<SongUrl>> {
         for v in array.iter() {
             let url: String = get_val!(v, "url").unwrap_or_default();
             if !url.is_empty() {
+                let rate: u32 = get_val!(v, "br")?;
                 vec.push(SongUrl {
                     id: get_val!(v, "id")?,
                     url,
-                    rate: get_val!(v, "br")?,
+                    rate,
+                    quality: get_val!(v, "level")
+                        .ok()
+                        .and_then(|level: String| SongQuality::from_level(&level))
+                        .unwrap_or_else(|| SongQuality::from_rate(rate)),
                 });
             }
         }
@@ -229,6 +292,22 @@ impl SongCopyright {
     }
 }
 
+/// 音质状态
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct SongQualityState {
+    pub available: Vec<SongQuality>,
+    pub selected: Option<SongQuality>,
+    pub actual: Option<SongQuality>,
+}
+
+fn default_quality_state() -> SongQualityState {
+    SongQualityState {
+        available: vec![SongQuality::Standard],
+        selected: None,
+        actual: None,
+    }
+}
+
 /// 歌曲信息
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct SongInfo {
@@ -248,6 +327,8 @@ pub struct SongInfo {
     pub duration: u64,
     /// 歌曲链接
     pub song_url: String,
+    /// 音质状态
+    pub quality: SongQualityState,
 
     pub copyright: SongCopyright,
 }
@@ -289,6 +370,7 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         pic_url: get_val!(v, "al", "picUrl").unwrap_or_default(),
                         duration: get_val!(v, "dt")?,
                         song_url: String::new(),
+                        quality: default_quality_state(),
                         copyright: SongCopyright::Unknown,
                     });
                 }
@@ -306,6 +388,7 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         pic_url: String::new(),
                         duration: get_val!(v, "simpleSong", "dt")?,
                         song_url: String::new(),
+                        quality: default_quality_state(),
                         copyright: SongCopyright::Unknown,
                     });
                 }
@@ -325,6 +408,7 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         pic_url: get_val!(v, "album", "picUrl").unwrap_or_default(),
                         duration: get_val!(v, "duration")?,
                         song_url: String::new(),
+                        quality: default_quality_state(),
                         copyright: SongCopyright::Unknown,
                     });
                 }
@@ -344,6 +428,7 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         pic_url: get_val!(v, "al", "picUrl").unwrap_or_default(),
                         duration: get_val!(v, "dt")?,
                         song_url: String::new(),
+                        quality: default_quality_state(),
                         copyright: SongCopyright::Unknown,
                     });
                 }
@@ -363,6 +448,7 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         pic_url: get_val!(v, "album", "picUrl").unwrap_or_default(),
                         duration: get_val!(v, "duration")?,
                         song_url: String::new(),
+                        quality: default_quality_state(),
                         copyright: SongCopyright::Unknown,
                     });
                 }
@@ -383,6 +469,7 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         pic_url: get_val!(value, "album", "picUrl").unwrap_or_default(),
                         duration: get_val!(v, "dt")?,
                         song_url: String::new(),
+                        quality: default_quality_state(),
                         copyright: SongCopyright::Unknown,
                     });
                 }
@@ -399,6 +486,7 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         pic_url: String::new(),
                         duration: get_val!(v, "dt")?,
                         song_url: String::new(),
+                        quality: default_quality_state(),
                         copyright: SongCopyright::Unknown,
                     });
                 }
@@ -418,6 +506,7 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         pic_url: String::new(),
                         duration: get_val!(v, "dt")?,
                         song_url: String::new(),
+                        quality: default_quality_state(),
                         copyright: SongCopyright::Unknown,
                     });
                 }
@@ -435,6 +524,7 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         pic_url: get_val!(v, "coverUrl")?,
                         duration: get_val!(v, "duration")?,
                         song_url: String::new(),
+                        quality: default_quality_state(),
                         copyright: SongCopyright::Unknown,
                     });
                     num -= 1;
@@ -456,6 +546,7 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         pic_url: get_val!(v, "songInfo", "al", "picUrl").unwrap_or_default(),
                         duration: get_val!(v, "songInfo", "dt")?,
                         song_url: String::new(),
+                        quality: default_quality_state(),
                         copyright: SongCopyright::Unknown,
                     });
                 }
@@ -509,6 +600,7 @@ pub fn to_mix_detail(json: &Value) -> Result<PlayListDetail> {
                 pic_url: get_val!(v, "al", "picUrl").unwrap_or_default(),
                 duration: get_val!(v, "dt")?,
                 song_url: String::new(),
+                quality: default_quality_state(),
                 copyright: SongCopyright::from_privilege(p)?,
             });
         }
@@ -567,6 +659,7 @@ pub fn to_album_detail(json: &Value) -> Result<AlbumDetail> {
                 pic_url: pic_url.clone(),
                 duration: get_val!(v, "dt")?,
                 song_url: String::new(),
+                quality: default_quality_state(),
                 copyright: SongCopyright::from_privilege(get_val!(v, "privilege")?)?,
             });
         }
