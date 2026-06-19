@@ -18,7 +18,6 @@ use std::{
     sync::OnceLock,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use urlqstring::QueryParams;
 
 lazy_static! {
     static ref _CSRF: Regex = Regex::new(r"_csrf=(?P<csrf>[^(;|$)]+)").unwrap();
@@ -177,17 +176,18 @@ impl MusicApi {
                 };
                 let body = match cryptoapi {
                     CryptoApi::LinuxApi => {
-                        let data = format!(
-                            r#"{{"method":"linuxapi","url":"{}","params":{}}}"#,
-                            url.replace("weapi", "api"),
-                            QueryParams::from_map(params).json()
-                        );
+                        let data = serde_json::to_string(&serde_json::json!({
+                            "method": "linuxapi",
+                            "url": url.replace("weapi", "api"),
+                            "params": params,
+                        }))
+                        .unwrap();
                         Crypto::linuxapi(&data)
                     }
                     CryptoApi::Weapi => {
                         let mut params = params;
                         params.insert("csrf_token", &csrf);
-                        Crypto::weapi(&QueryParams::from_map(params).json())
+                        Crypto::weapi(&serde_json::to_string(&params).unwrap())
                     }
                     CryptoApi::Eapi => {
                         let mut params = params;
@@ -196,9 +196,7 @@ impl MusicApi {
                         let api_path = path.replacen("/api", "/eapi", 1);
                         url = format!("https://interface.music.163.com{}", api_path);
 
-                        let data_json = QueryParams::from_map(params).json();
-                        let mut data: serde_json::Value =
-                            serde_json::from_str(&data_json).unwrap_or(serde_json::Value::Null);
+                        let mut data = serde_json::json!(params);
 
                         let now_ms = SystemTime::now()
                             .duration_since(UNIX_EPOCH)
@@ -235,10 +233,7 @@ impl MusicApi {
                     CryptoApi::Eapi => "interface.music.163.com",
                     _ => "music.163.com",
                 };
-                let cookie = match cryptoapi {
-                    CryptoApi::Eapi => "os=iphone; appver=9.0.90",
-                    _ => "os=pc; appver=2.7.1.198277",
-                };
+                let cookie = build_cookie(&cryptoapi);
                 let request = Request::post(&url)
                     .header("Cookie", cookie)
                     .header("Accept", "*/*")
@@ -306,12 +301,14 @@ impl MusicApi {
         phone: String,
         captcha: String,
     ) -> Result<LoginInfo> {
-        let path = "/weapi/login/cellphone";
+        let path = "/weapi/w/login/cellphone";
         let mut params = HashMap::new();
         params.insert("phone", &phone[..]);
         params.insert("countrycode", &ctcode[..]);
+        params.insert("type", "1");
+        params.insert("https", "true");
+        params.insert("remember", "true");
         params.insert("captcha", &captcha[..]);
-        params.insert("rememberLogin", "true");
         let result = self
             .request(Method::Post, path, params, CryptoApi::Weapi, "", true)
             .await?;
@@ -327,6 +324,7 @@ impl MusicApi {
         let mut params = HashMap::new();
         params.insert("cellphone", &phone[..]);
         params.insert("ctcode", &ctcode[..]);
+        params.insert("secrete", "music_middleuser_pclogin");
         let result = self
             .request(Method::Post, path, params, CryptoApi::Weapi, "", true)
             .await?;
@@ -584,7 +582,7 @@ impl MusicApi {
     /// 每日推荐歌曲
     #[allow(unused)]
     pub async fn recommend_songs(&self) -> Result<Vec<SongInfo>> {
-        let path = "/weapi/v3/discovery/recommend/songs";
+        let path = "/api/v3/discovery/recommend/songs";
         let mut params = HashMap::new();
         params.insert("afresh", "false");
         let result = self
@@ -1168,6 +1166,36 @@ impl MusicApi {
     }
 }
 
+fn build_cookie(cryptoapi: &CryptoApi) -> String {
+    let (os, appver, osver) = match cryptoapi {
+        CryptoApi::Eapi => ("iphone", "9.0.90", "16.2"),
+        _ => ("pc", "2.7.1.198277", "10"),
+    };
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let now_str = now.to_string();
+
+    let nuid = format!("{:x}{:x}", rand::random::<u64>(), rand::random::<u64>());
+    let nnid = format!("{},{}", nuid, now_str);
+    let nmtid = format!("{:x}", rand::random::<u64>());
+    let wnmcid = format!(
+        "{:02x}{:02x}{:02x}.{}",
+        rand::random::<u8>(),
+        rand::random::<u8>(),
+        rand::random::<u8>(),
+        now_str,
+    );
+
+    format!(
+        "os={}; appver={}; osver={}; deviceId=; WEVNSM=1.0.0; \
+         WNMCID={}; _ntes_nnid={}; _ntes_nuid={}; NMTID={}; \
+         __remember_me=true; channel=",
+        os, appver, osver, wnmcid, nnid, nuid, nmtid,
+    )
+}
+
 fn choose_user_agent(ua: &str) -> &str {
     let index = if ua == "mobile" {
         rand::random::<u16>() % 7
@@ -1189,11 +1217,12 @@ mod tests {
     #[async_std::test]
     async fn test() {
         let api = MusicApi::default();
-        dbg!(api.songs_url(&[1908049566], "320000").await.unwrap());
-        dbg!(api
+        assert!(api.songs_url(&[1908049566], "320000").await.is_ok());
+        assert!(api
             .songs_url_v1(&[1908049566], SongQuality::Standard)
             .await
-            .unwrap());
+            .is_ok());
+        dbg!(api.recommend_songs().await.unwrap());
         assert!(api.banners().await.is_ok());
     }
 
