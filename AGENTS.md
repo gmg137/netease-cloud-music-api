@@ -23,7 +23,7 @@ All public API methods are marked `#[allow(unused)]` — intentional for library
 
 ## Key Dependencies
 
-- **HTTP**: `isahc` with cookies (not reqwest)
+- **HTTP**: `isahc` v2 with cookies (not reqwest)
 - **Async runtime (tests)**: `async-std` with `#[async_std::test]` (not tokio)
 - **Encryption**: `openssl` (AES-CBC/ECB, RSA), `base64`, `hex`
 - **Serialization**: `serde` + `serde_json`
