@@ -692,6 +692,9 @@ pub struct SongList {
     pub cover_img_url: String,
     /// 歌单作者
     pub author: String,
+    /// 歌单类型 (5 = 我喜欢的音乐)
+    #[serde(default)]
+    pub special_type: u32,
 }
 
 /// parse: 解析方式
@@ -709,6 +712,7 @@ pub fn to_song_list(json: String, parse: Parse) -> Result<Vec<SongList>> {
                         name: get_val!(v, "name")?,
                         cover_img_url: get_val!(v, "coverImgUrl")?,
                         author: get_val!(v, "creator", "nickname")?,
+                        special_type: get_val!(v, "specialType").unwrap_or(0),
                     });
                 }
             }
@@ -720,6 +724,7 @@ pub fn to_song_list(json: String, parse: Parse) -> Result<Vec<SongList>> {
                         name: get_val!(v, "name")?,
                         cover_img_url: get_val!(v, "picUrl").unwrap_or_default(),
                         author: get_val!(v, "creator", "nickname")?,
+                        special_type: get_val!(v, "specialType").unwrap_or(0),
                     });
                 }
             }
@@ -731,6 +736,7 @@ pub fn to_song_list(json: String, parse: Parse) -> Result<Vec<SongList>> {
                         name: get_val!(v, "name")?,
                         cover_img_url: get_val!(v, "picUrl")?,
                         author: get_val!(v, "artist", "name")?,
+                        special_type: get_val!(v, "specialType").unwrap_or(0),
                     });
                 }
             }
@@ -742,6 +748,7 @@ pub fn to_song_list(json: String, parse: Parse) -> Result<Vec<SongList>> {
                         name: get_val!(v, "name")?,
                         cover_img_url: get_val!(v, "coverImgUrl")?,
                         author: get_val!(v, "creator", "nickname")?,
+                        special_type: get_val!(v, "specialType").unwrap_or(0),
                     });
                 }
             }
@@ -753,6 +760,7 @@ pub fn to_song_list(json: String, parse: Parse) -> Result<Vec<SongList>> {
                         name: get_val!(v, "name")?,
                         cover_img_url: get_val!(v, "coverImgUrl")?,
                         author: get_val!(v, "creator", "nickname")?,
+                        special_type: get_val!(v, "specialType").unwrap_or(0),
                     });
                 }
             }
@@ -764,6 +772,7 @@ pub fn to_song_list(json: String, parse: Parse) -> Result<Vec<SongList>> {
                         name: get_val!(v, "name")?,
                         cover_img_url: get_val!(v, "picUrl")?,
                         author: get_val!(v, "artist", "name")?,
+                        special_type: get_val!(v, "specialType").unwrap_or(0),
                     });
                 }
             }
@@ -777,6 +786,7 @@ pub fn to_song_list(json: String, parse: Parse) -> Result<Vec<SongList>> {
                         author: get_val!(@as &Vec<Value>, v, "artists")?
                             .first()
                             .map_or(Ok(String::new()), |v: &Value| get_val!(v, "name"))?,
+                        special_type: get_val!(v, "specialType").unwrap_or(0),
                     });
                 }
             }
@@ -788,6 +798,7 @@ pub fn to_song_list(json: String, parse: Parse) -> Result<Vec<SongList>> {
                         name: get_val!(v, "name")?,
                         cover_img_url: get_val!(v, "picUrl")?,
                         author: get_val!(v, "dj", "nickname")?,
+                        special_type: get_val!(v, "specialType").unwrap_or(0),
                     });
                 }
             }
@@ -1109,5 +1120,22 @@ impl fmt::Display for ClientType {
             Self::Ipad => "ipad".to_owned(),
         };
         write!(f, "{s}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn to_song_list_parses_special_type() {
+        let json = r#"{"code":200,"playlist":[
+            {"id":1,"name":"我喜欢的音乐","coverImgUrl":"http://x","creator":{"nickname":"me"},"specialType":5},
+            {"id":2,"name":"普通歌单","coverImgUrl":"http://y","creator":{"nickname":"me"}}
+        ]}"#;
+        let list = to_song_list(json.to_string(), Parse::Usl).unwrap();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].special_type, 5);
+        assert_eq!(list[1].special_type, 0);
     }
 }
