@@ -6,7 +6,7 @@
 mod encrypt;
 pub(crate) mod model;
 use anyhow::{anyhow, Result};
-use encrypt::Crypto;
+use encrypt::{Crypto, XeapiPublicKeyState};
 pub use isahc::cookies::{CookieBuilder, CookieJar};
 use isahc::{prelude::*, *};
 use lazy_static::lazy_static;
@@ -18,6 +18,7 @@ use std::{
     sync::OnceLock,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+use urlqstring::QueryParams;
 
 lazy_static! {
     static ref _CSRF: Regex = Regex::new(r"_csrf=(?P<csrf>[^(;|$)]+)").unwrap();
@@ -29,6 +30,9 @@ const TIMEOUT: u64 = 100;
 
 const LINUX_USER_AGNET: &str =
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3112.90 Safari/537.36";
+
+const XEAPI_USER_AGENT: &str =
+    "NeteaseMusic/9.5.61.260802021928(9005061);Dalvik/2.1.0 (Linux; U; Android 12; HBN-AL00 Build/cd737a2.0)";
 
 const USER_AGENT_LIST: [&str; 14] = [
     "Mozilla/5.0 (iPhone; CPU iPhone OS 9_1 like Mac OS X) AppleWebKit/601.1.46 (KHTML, like Gecko) Version/9.0 Mobile/13B143 Safari/601.1",
@@ -51,6 +55,7 @@ const USER_AGENT_LIST: [&str; 14] = [
 pub struct MusicApi {
     client: HttpClient,
     csrf: OnceLock<String>,
+    xeapi_public_key: OnceLock<XeapiPublicKeyState>,
 }
 
 #[allow(unused)]
@@ -58,6 +63,7 @@ enum CryptoApi {
     Weapi,
     LinuxApi,
     Eapi,
+    Xeapi,
 }
 
 impl Default for MusicApi {
@@ -78,6 +84,7 @@ impl MusicApi {
         Self {
             client,
             csrf: OnceLock::new(),
+            xeapi_public_key: OnceLock::new(),
         }
     }
 
@@ -93,6 +100,7 @@ impl MusicApi {
         Self {
             client,
             csrf: OnceLock::new(),
+            xeapi_public_key: OnceLock::new(),
         }
     }
 
@@ -128,6 +136,79 @@ impl MusicApi {
                 .expect("初始化网络请求失败!");
             self.client = client;
         }
+        Ok(())
+    }
+
+    fn get_music_u(&self) -> Option<String> {
+        let cookies = self.cookie_jar()?;
+        let uri = BASE_URL.parse().ok()?;
+        let cookie = cookies.get_by_name(&uri, "MUSIC_U")?;
+        let value = cookie.value();
+        if value.is_empty() {
+            None
+        } else {
+            Some(value.to_string())
+        }
+    }
+
+    /// 获取 xeapi 公钥
+    #[allow(unused)]
+    pub async fn fetch_xeapi_public_key(&self) -> Result<()> {
+        if self.xeapi_public_key.get().is_some() {
+            return Ok(());
+        }
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+            .to_string();
+        let nonce: String = (0..16)
+            .map(|_| (b'0' + rand::random::<u8>() % 10) as char)
+            .collect();
+        let signature = Crypto::xeapi_sign(&timestamp, &nonce);
+        let device_id = format!("{:x}{:x}", rand::random::<u64>(), rand::random::<u64>());
+        let body = QueryParams::from(vec![
+            ("appVersion", "9.5.61"),
+            ("currentKeyVersion", ""),
+            ("deviceId", device_id.as_str()),
+            ("nonce", nonce.as_str()),
+            ("os", "android"),
+            ("requestType", "active"),
+            ("signature", signature.as_str()),
+            ("t1", ""),
+            ("t2", ""),
+            ("timestamp", timestamp.as_str()),
+            ("uid", ""),
+        ])
+        .stringify();
+        let url = "https://interface.music.163.com/api/gorilla/anti/crawler/security/key/get";
+        let request = Request::post(url)
+            .header("User-Agent", XEAPI_USER_AGENT)
+            .header(
+                "Content-Type",
+                "application/x-www-form-urlencoded;charset=utf-8",
+            )
+            .header("Host", "interface.music.163.com")
+            .header("Cookie", build_cookie(&CryptoApi::Xeapi))
+            .body(body)
+            .unwrap();
+        let mut response = self
+            .client
+            .send_async(request)
+            .await
+            .map_err(|_| anyhow!("none"))?;
+        let text = response.text().await.map_err(|_| anyhow!("none"))?;
+        let json: serde_json::Value =
+            serde_json::from_str(&text).map_err(|_| anyhow!("json parse failed"))?;
+        let data = json
+            .get("data")
+            .ok_or_else(|| anyhow!("no data"))?;
+        let encrypted_data = data
+            .get("encryptedData")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("no encryptedData"))?;
+        let public_key = Crypto::xeapi_decrypt_public_key(encrypted_data)?;
+        let _ = self.xeapi_public_key.get_or_init(|| public_key);
         Ok(())
     }
 
@@ -173,6 +254,7 @@ impl MusicApi {
                     CryptoApi::LinuxApi => LINUX_USER_AGNET.to_string(),
                     CryptoApi::Weapi => choose_user_agent(ua).to_string(),
                     CryptoApi::Eapi => choose_user_agent(ua).to_string(),
+                    CryptoApi::Xeapi => XEAPI_USER_AGENT.to_string(),
                 };
                 let body = match cryptoapi {
                     CryptoApi::LinuxApi => {
@@ -227,10 +309,27 @@ impl MusicApi {
 
                         Crypto::eapi(path, &data.to_string())
                     }
+                    CryptoApi::Xeapi => {
+                        if self.xeapi_public_key.get().is_none() {
+                            self.fetch_xeapi_public_key().await?;
+                        }
+                        let pk = self
+                            .xeapi_public_key
+                            .get()
+                            .ok_or_else(|| anyhow!("xeapi public key unavailable"))?;
+                        let rest = if path.starts_with("/api/") {
+                            &path[5..]
+                        } else {
+                            path
+                        };
+                        url = format!("https://interface3.music.163.com/xeapi/{}", rest);
+                        Crypto::xeapi(path, &params, pk)?
+                    }
                 };
 
                 let host = match cryptoapi {
                     CryptoApi::Eapi => "interface.music.163.com",
+                    CryptoApi::Xeapi => "interface3.music.163.com",
                     _ => "music.163.com",
                 };
                 let cookie = build_cookie(&cryptoapi);
@@ -242,15 +341,48 @@ impl MusicApi {
                     .header("Content-Type", "application/x-www-form-urlencoded")
                     .header("Host", host)
                     .header("Referer", "https://music.163.com")
-                    .header("User-Agent", user_agent)
-                    .body(body)
-                    .unwrap();
+                    .header("User-Agent", user_agent);
+                let request = if let CryptoApi::Xeapi = cryptoapi {
+                    let now_ms = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis();
+                    let now_str = now_ms.to_string();
+                    let buildver = &now_str[..now_str.len().min(10)];
+                    let device_id =
+                        format!("{:x}{:x}", rand::random::<u64>(), rand::random::<u64>());
+                    let mut rb = request
+                        .header(
+                            "Content-Type",
+                            "application/x-www-form-urlencoded;charset=utf-8",
+                        )
+                        .header("X-Client-Enc-State", "ENCRYPTED")
+                        .header("x-aeapi", "true")
+                        .header("x-deviceid", &device_id)
+                        .header("x-os", "android")
+                        .header("x-osver", "16")
+                        .header("x-appver", "9.5.61")
+                        .header("x-sdeviceid", &device_id)
+                        .header("x-buildver", buildver);
+                    if let Some(music_u) = self.get_music_u() {
+                        rb = rb.header("x-music-u", &music_u);
+                    }
+                    rb.body(body).unwrap()
+                } else {
+                    request.body(body).unwrap()
+                };
                 let mut response = self
                     .client
                     .send_async(request)
                     .await
                     .map_err(|_| anyhow!("none"))?;
-                response.text().await.map_err(|_| anyhow!("none"))
+                match cryptoapi {
+                    CryptoApi::Xeapi => {
+                        let bytes = response.bytes().await.map_err(|_| anyhow!("none"))?;
+                        Crypto::xeapi_res_decrypt(&bytes)
+                    }
+                    _ => response.text().await.map_err(|_| anyhow!("none")),
+                }
             }
             Method::Get => self
                 .client
@@ -623,6 +755,34 @@ impl MusicApi {
         params.insert("time", "25");
         if let Ok(result) = self
             .request(Method::Post, path, params, CryptoApi::Weapi, "", true)
+            .await
+        {
+            return to_msg(result)
+                .unwrap_or(Msg {
+                    code: 0,
+                    msg: "".to_owned(),
+                })
+                .code
+                .eq(&200);
+        }
+        false
+    }
+
+    /// 收藏/取消收藏 (xeapi)
+    /// songid: 歌曲id
+    /// like: true 收藏，false 取消
+    #[allow(unused)]
+    pub async fn like_v1(&self, like: bool, songid: u64) -> bool {
+        let path = "/api/v1/radio/like";
+        let mut params = HashMap::new();
+        let songid = songid.to_string();
+        let like = like.to_string();
+        params.insert("alg", "itembased");
+        params.insert("trackId", songid.as_str());
+        params.insert("like", like.as_str());
+        params.insert("time", "3");
+        if let Ok(result) = self
+            .request(Method::Post, path, params, CryptoApi::Xeapi, "", false)
             .await
         {
             return to_msg(result)
@@ -1169,6 +1329,7 @@ impl MusicApi {
 fn build_cookie(cryptoapi: &CryptoApi) -> String {
     let (os, appver, osver) = match cryptoapi {
         CryptoApi::Eapi => ("iphone", "9.0.90", "16.2"),
+        CryptoApi::Xeapi => ("android", "9.5.61", "16"),
         _ => ("pc", "2.7.1.198277", "10"),
     };
     let now = SystemTime::now()
