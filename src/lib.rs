@@ -622,7 +622,8 @@ impl MusicApi {
         let result = self
             .request(Method::Post, path, params, CryptoApi::Weapi, "", true)
             .await?;
-        to_mix_detail(&serde_json::from_str(&result)?)
+        let json = serde_json::from_str(&result)?;
+        complete_playlist(&json, |ids| async move { self.songs_detail(&ids).await }).await
     }
 
     /// 歌曲详情
@@ -631,12 +632,11 @@ impl MusicApi {
     pub async fn songs_detail(&self, ids: &[u64]) -> Result<Vec<SongInfo>> {
         let path = "/weapi/v3/song/detail";
         let mut params = HashMap::new();
-        let c = ids
-            .iter()
-            .map(|i| format!("{{\\\"id\\\":\\\"{}\\\"}}", i))
-            .collect::<Vec<String>>()
-            .join(",");
-        let c = format!("[{}]", c);
+        let c = serde_json::to_string(
+            &ids.iter()
+                .map(|id| serde_json::json!({ "id": id }))
+                .collect::<Vec<_>>(),
+        )?;
         params.insert("c", &c[..]);
         let result = self
             .request(Method::Post, path, params, CryptoApi::Weapi, "", true)
@@ -1370,10 +1370,196 @@ fn choose_user_agent(ua: &str) -> &str {
     USER_AGENT_LIST[index as usize]
 }
 
+// Playlist details contain at most 1000 tracks, but trackIds contains the
+// playlist order. Fetch only missing details, keeping each request bounded.
+async fn complete_playlist<F, Fut>(json: &serde_json::Value, mut fetch: F) -> Result<PlayListDetail>
+where
+    F: FnMut(Vec<u64>) -> Fut,
+    Fut: std::future::Future<Output = Result<Vec<SongInfo>>>,
+{
+    let mut detail = to_mix_detail(json)?;
+    let Some(track_ids) = json["playlist"]["trackIds"].as_array() else {
+        return Ok(detail);
+    };
+    let ids = track_ids
+        .iter()
+        .map(|track| {
+            track["id"]
+                .as_u64()
+                .ok_or_else(|| anyhow!("Invalid playlist track ID"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let mut songs: HashMap<_, _> = detail
+        .songs
+        .iter()
+        .cloned()
+        .map(|song| (song.id, song))
+        .collect();
+    let missing: Vec<_> = ids
+        .iter()
+        .copied()
+        .filter(|id| !songs.contains_key(id))
+        .collect();
+    if missing.is_empty() {
+        return Ok(detail);
+    }
+    for batch in missing.chunks(500) {
+        for song in fetch(batch.to_vec()).await? {
+            songs.insert(song.id, song);
+        }
+    }
+    // Deleted/unavailable tracks may be omitted by the song-detail endpoint.
+    detail.songs = ids.iter().filter_map(|id| songs.get(id).cloned()).collect();
+    Ok(detail)
+}
+
 #[cfg(test)]
 mod tests {
 
     use super::*;
+
+    fn playlist_fixture(total: u64, loaded: u64) -> serde_json::Value {
+        serde_json::json!({
+            "code": 200,
+            "playlist": {
+                "id": 42, "name": "test", "coverImgUrl": "", "description": "",
+                "createTime": 0, "trackUpdateTime": 0,
+                "trackIds": (1..=total).map(|id| serde_json::json!({"id": id})).collect::<Vec<_>>(),
+                "tracks": (1..=loaded).map(|id| serde_json::json!({
+                    "id": id, "name": "song", "ar": [{"name": "artist"}],
+                    "al": {"id": 1, "name": "album", "picUrl": ""}, "dt": 1000
+                })).collect::<Vec<_>>()
+            },
+            "privileges": (1..=loaded).map(|_| serde_json::json!({"st": 0, "fee": 0})).collect::<Vec<_>>()
+        })
+    }
+
+    #[async_std::test]
+    async fn playlist_completes_batches_in_original_order() {
+        let json = playlist_fixture(2201, 1000);
+        let template = to_mix_detail(&json).unwrap().songs[0].clone();
+        let mut requests = Vec::new();
+        let detail = complete_playlist(&json, |ids| {
+            requests.push(ids.clone());
+            let songs = ids
+                .into_iter()
+                .rev()
+                .map(|id| SongInfo {
+                    id,
+                    ..template.clone()
+                })
+                .collect();
+            std::future::ready(Ok(songs))
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            requests.iter().map(Vec::len).collect::<Vec<_>>(),
+            [500, 500, 201]
+        );
+        assert_eq!(requests.concat(), (1001..=2201).collect::<Vec<_>>());
+        assert_eq!(
+            detail.songs.iter().map(|s| s.id).collect::<Vec<_>>(),
+            (1..=2201).collect::<Vec<_>>()
+        );
+    }
+
+    #[async_std::test]
+    async fn playlist_keeps_small_and_legacy_responses() {
+        for count in [0, 2, 1000] {
+            let mut json = playlist_fixture(count, count);
+            for legacy in [false, true] {
+                if legacy {
+                    json["playlist"].as_object_mut().unwrap().remove("trackIds");
+                }
+                let detail = complete_playlist(&json, |_| {
+                    std::future::ready(Err(anyhow!("unexpected extra request")))
+                })
+                .await
+                .unwrap();
+                assert_eq!(detail.songs.len(), count as usize);
+            }
+        }
+    }
+
+    #[async_std::test]
+    async fn playlist_propagates_batch_failure() {
+        let result = complete_playlist(&playlist_fixture(1001, 1000), |_| {
+            std::future::ready(Err(anyhow!("batch failed")))
+        })
+        .await;
+        assert_eq!(result.unwrap_err().to_string(), "batch failed");
+    }
+
+    #[async_std::test]
+    async fn playlist_handles_omitted_tracks_without_reordering() {
+        let json = playlist_fixture(4, 2);
+        let template = to_mix_detail(&json).unwrap().songs[0].clone();
+        let detail = complete_playlist(&json, |_| {
+            std::future::ready(Ok(vec![SongInfo {
+                id: 4,
+                ..template.clone()
+            }]))
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            detail.songs.iter().map(|s| s.id).collect::<Vec<_>>(),
+            [1, 2, 4]
+        );
+    }
+
+    #[test]
+    fn song_details_allow_an_empty_batch() {
+        let songs = to_song_info(r#"{"code":200,"songs":[]}"#.into(), Parse::Usl).unwrap();
+        assert!(songs.is_empty());
+        assert!(to_song_info(r#"{"code":500,"songs":[]}"#.into(), Parse::Usl).is_err());
+    }
+
+    #[async_std::test]
+    #[ignore = "requires access to NetEase and a public playlist with over 1000 tracks"]
+    async fn playlist_live_over_1000() {
+        let api = MusicApi::default();
+        let params = HashMap::from([
+            ("id", "2092244409"),
+            ("n", "1000"),
+            ("limit", "1000"),
+            ("offset", "0"),
+            ("total", "true"),
+        ]);
+        let raw = api
+            .request(
+                Method::Post,
+                "/weapi/v6/playlist/detail",
+                params,
+                CryptoApi::Weapi,
+                "",
+                true,
+            )
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        eprintln!(
+            "code={}, message={}, tracks={}, trackIds={}",
+            json["code"],
+            json["message"],
+            json["playlist"]["tracks"].as_array().map_or(0, Vec::len),
+            json["playlist"]["trackIds"].as_array().map_or(0, Vec::len)
+        );
+        let detail = api.song_list_detail(2092244409).await.unwrap();
+        eprintln!("Playlist {}: {} songs", detail.id, detail.songs.len());
+        assert!(detail.songs.len() > 1000);
+        let expected: Vec<_> = json["playlist"]["trackIds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|track| track["id"].as_u64().unwrap())
+            .collect();
+        assert_eq!(
+            detail.songs.iter().map(|song| song.id).collect::<Vec<_>>(),
+            expected
+        );
+    }
 
     #[async_std::test]
     async fn test() {

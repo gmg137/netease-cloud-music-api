@@ -348,13 +348,10 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
     let unk = "unknown".to_string();
     if code == 200 {
         let mut vec: Vec<SongInfo> = Vec::new();
-        let list = vec![];
         match parse {
             Parse::Usl => {
-                let mut array: &Vec<Value> = get_val!(value, "songs").unwrap_or(&list);
-                if array.is_empty() {
-                    array = get_val!(value, "playlist", "tracks")?;
-                }
+                let array: &Vec<Value> = get_val!(value, "songs")
+                    .or_else(|_| get_val!(value, "playlist", "tracks"))?;
                 for v in array.iter() {
                     let ar: &Vec<Value> = get_val!(v, "ar")?;
 
