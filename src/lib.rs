@@ -200,9 +200,7 @@ impl MusicApi {
         let text = response.text().await.map_err(|_| anyhow!("none"))?;
         let json: serde_json::Value =
             serde_json::from_str(&text).map_err(|_| anyhow!("json parse failed"))?;
-        let data = json
-            .get("data")
-            .ok_or_else(|| anyhow!("no data"))?;
+        let data = json.get("data").ok_or_else(|| anyhow!("no data"))?;
         let encrypted_data = data
             .get("encryptedData")
             .and_then(|v| v.as_str())
@@ -608,21 +606,17 @@ impl MusicApi {
     /// songlist_id: 歌单 id
     #[allow(unused)]
     pub async fn song_list_detail(&self, songlist_id: u64) -> Result<PlayListDetail> {
-        let empty = String::new();
-        let csrf_token = self.csrf.get().unwrap_or(&empty);
-        let path = "/weapi/v6/playlist/detail";
+        let path = "/api/v6/playlist/detail";
         let mut params = HashMap::new();
         let songlist_id = songlist_id.to_string();
         params.insert("id", songlist_id.as_str());
-        params.insert("offset", "0");
-        params.insert("total", "true");
-        params.insert("limit", "1000");
-        params.insert("n", "1000");
-        params.insert("csrf_token", csrf_token);
+        params.insert("n", "10000");
+        params.insert("s", "8");
         let result = self
-            .request(Method::Post, path, params, CryptoApi::Weapi, "", true)
+            .request(Method::Post, path, params, CryptoApi::Eapi, "", true)
             .await?;
-        to_mix_detail(&serde_json::from_str(&result)?)
+        let json: serde_json::Value = serde_json::from_str(&result)?;
+        complete_playlist(&json, |ids| async move { self.songs_detail(&ids).await }).await
     }
 
     /// 歌曲详情
@@ -631,12 +625,11 @@ impl MusicApi {
     pub async fn songs_detail(&self, ids: &[u64]) -> Result<Vec<SongInfo>> {
         let path = "/weapi/v3/song/detail";
         let mut params = HashMap::new();
-        let c = ids
-            .iter()
-            .map(|i| format!("{{\\\"id\\\":\\\"{}\\\"}}", i))
-            .collect::<Vec<String>>()
-            .join(",");
-        let c = format!("[{}]", c);
+        let c = serde_json::to_string(
+            &ids.iter()
+                .map(|id| serde_json::json!({ "id": id }))
+                .collect::<Vec<_>>(),
+        )?;
         params.insert("c", &c[..]);
         let result = self
             .request(Method::Post, path, params, CryptoApi::Weapi, "", true)
@@ -1370,10 +1363,157 @@ fn choose_user_agent(ua: &str) -> &str {
     USER_AGENT_LIST[index as usize]
 }
 
+// 服务端 playlist.tracks 最多返回约 1000 条完整歌曲，
+// 用 trackIds 补齐缺失部分并保持歌单顺序
+async fn complete_playlist<F, Fut>(json: &serde_json::Value, mut fetch: F) -> Result<PlayListDetail>
+where
+    F: FnMut(Vec<u64>) -> Fut,
+    Fut: std::future::Future<Output = Result<Vec<SongInfo>>>,
+{
+    let mut detail = to_mix_detail(json)?;
+    let Some(track_ids) = json["playlist"]["trackIds"].as_array() else {
+        return Ok(detail);
+    };
+    let ids: Vec<u64> = track_ids
+        .iter()
+        .map(|t| {
+            t["id"]
+                .as_u64()
+                .ok_or_else(|| anyhow!("Invalid playlist track ID"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let mut songs: HashMap<u64, SongInfo> = detail
+        .songs
+        .iter()
+        .cloned()
+        .map(|song| (song.id, song))
+        .collect();
+    let missing: Vec<u64> = ids
+        .iter()
+        .copied()
+        .filter(|id| !songs.contains_key(id))
+        .collect();
+    if missing.is_empty() {
+        return Ok(detail);
+    }
+    for batch in missing.chunks(500) {
+        for song in fetch(batch.to_vec()).await? {
+            songs.insert(song.id, song);
+        }
+    }
+    // 已删除/失效的曲目可能不在歌曲详情返回中，跳过以保持顺序
+    detail.songs = ids.iter().filter_map(|id| songs.get(id).cloned()).collect();
+    Ok(detail)
+}
+
 #[cfg(test)]
 mod tests {
 
     use super::*;
+
+    fn playlist_fixture(total: u64, loaded: u64) -> serde_json::Value {
+        serde_json::json!({
+            "code": 200,
+            "playlist": {
+                "id": 42, "name": "test", "coverImgUrl": "", "description": "",
+                "createTime": 0, "trackUpdateTime": 0,
+                "trackIds": (1..=total).map(|id| serde_json::json!({"id": id})).collect::<Vec<_>>(),
+                "tracks": (1..=loaded).map(|id| serde_json::json!({
+                    "id": id, "name": "song", "ar": [{"name": "artist"}],
+                    "al": {"id": 1, "name": "album", "picUrl": ""}, "dt": 1000
+                })).collect::<Vec<_>>()
+            },
+            "privileges": (1..=loaded).map(|_| serde_json::json!({"st": 0, "fee": 0})).collect::<Vec<_>>()
+        })
+    }
+
+    #[async_std::test]
+    async fn playlist_completes_batches_in_original_order() {
+        let json = playlist_fixture(2201, 1000);
+        let template = to_mix_detail(&json).unwrap().songs[0].clone();
+        let mut requests = Vec::new();
+        let detail = complete_playlist(&json, |ids| {
+            requests.push(ids.clone());
+            let songs = ids
+                .into_iter()
+                .map(|id| SongInfo {
+                    id,
+                    ..template.clone()
+                })
+                .collect();
+            std::future::ready(Ok(songs))
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            requests.iter().map(Vec::len).collect::<Vec<_>>(),
+            [500, 500, 201]
+        );
+        assert_eq!(requests.concat(), (1001..=2201).collect::<Vec<_>>());
+        assert_eq!(
+            detail.songs.iter().map(|s| s.id).collect::<Vec<_>>(),
+            (1..=2201).collect::<Vec<_>>()
+        );
+    }
+
+    #[async_std::test]
+    async fn playlist_keeps_small_and_legacy_responses() {
+        for count in [0u64, 2, 1000] {
+            let mut json = playlist_fixture(count, count);
+            for legacy in [false, true] {
+                if legacy {
+                    json["playlist"].as_object_mut().unwrap().remove("trackIds");
+                }
+                let detail = complete_playlist(&json, |_| {
+                    std::future::ready(Err(anyhow!("unexpected extra request")))
+                })
+                .await
+                .unwrap();
+                assert_eq!(detail.songs.len(), count as usize);
+            }
+        }
+    }
+
+    #[async_std::test]
+    async fn playlist_propagates_batch_failure() {
+        let result = complete_playlist(&playlist_fixture(1001, 1000), |_| {
+            std::future::ready(Err(anyhow!("batch failed")))
+        })
+        .await;
+        assert_eq!(result.unwrap_err().to_string(), "batch failed");
+    }
+
+    #[async_std::test]
+    async fn playlist_handles_omitted_tracks_without_reordering() {
+        let json = playlist_fixture(4, 2);
+        let template = to_mix_detail(&json).unwrap().songs[0].clone();
+        let detail = complete_playlist(&json, |_| {
+            std::future::ready(Ok(vec![SongInfo {
+                id: 4,
+                ..template.clone()
+            }]))
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            detail.songs.iter().map(|s| s.id).collect::<Vec<_>>(),
+            [1, 2, 4]
+        );
+    }
+
+    #[test]
+    fn song_details_allow_an_empty_batch() {
+        let songs = to_song_info(r#"{"code":200,"songs":[]}"#.into(), Parse::Usl).unwrap();
+        assert!(songs.is_empty());
+    }
+
+    #[async_std::test]
+    #[ignore = "requires access to NetEase and a public playlist with over 1000 tracks"]
+    async fn playlist_live_over_1000() {
+        let api = MusicApi::default();
+        let detail = api.song_list_detail(2092244409).await.unwrap();
+        assert!(detail.songs.len() > 1000);
+    }
 
     #[async_std::test]
     async fn test() {
@@ -1384,6 +1524,12 @@ mod tests {
             .await
             .is_ok());
         dbg!(api.recommend_songs().await.unwrap());
+        let pld = match api.song_list_detail(2092244409).await {
+            Ok(p) => p,
+            Err(e) => panic!("song_list_detail failed: {e:#}"),
+        };
+        dbg!(pld.songs.len());
+
         assert!(api.banners().await.is_ok());
     }
 
