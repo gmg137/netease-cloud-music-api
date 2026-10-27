@@ -85,10 +85,8 @@ impl Crypto {
     pub fn eapi_res_decrypt(encrypted_params: &str, aeapi: bool) -> Result<String> {
         let encrypted_bytes =
             hex::decode(encrypted_params).map_err(|_| anyhow!("hex decode failed"))?;
-        let mut decrypted = Crypto::aes_decrypt(&encrypted_bytes, &EAPIKEY, ecb, None)?;
-
-        let pad_len = decrypted[decrypted.len() - 1] as usize;
-        decrypted.truncate(decrypted.len() - pad_len);
+        // openssl 解密已按 PKCS7 去除填充，无需再手工截断
+        let decrypted = Crypto::aes_decrypt(&encrypted_bytes, &EAPIKEY, ecb, None)?;
 
         if aeapi {
             let decoded = general_purpose::STANDARD
@@ -108,10 +106,8 @@ impl Crypto {
     pub fn eapi_req_decrypt(encrypted_params: &str) -> Result<(String, String)> {
         let encrypted_bytes =
             hex::decode(encrypted_params).map_err(|_| anyhow!("hex decode failed"))?;
-        let mut decrypted = Crypto::aes_decrypt(&encrypted_bytes, &EAPIKEY, ecb, None)?;
-
-        let pad_len = decrypted[decrypted.len() - 1] as usize;
-        decrypted.truncate(decrypted.len() - pad_len);
+        // openssl 解密已按 PKCS7 去除填充，无需再手工截断
+        let decrypted = Crypto::aes_decrypt(&encrypted_bytes, &EAPIKEY, ecb, None)?;
 
         let text =
             String::from_utf8(decrypted).map_err(|_| anyhow!("utf8 decode failed"))?;
@@ -401,4 +397,20 @@ fn hmac_sha256(key: &[u8], data: &[u8]) -> Result<Vec<u8>> {
     signer
         .sign_to_vec()
         .map_err(|_| anyhow!("sign failed"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn eapi_res_decrypt_round_trips_pkcs7_payloads() {
+        // 非整块长度与整块长度都要能正确去掉 PKCS7 填充
+        for plain in [r#"{"code":200,"msg":"ok"}"#, "0123456789abcdef"] {
+            let cipher = Crypto::aes_encrypt(plain, &EAPIKEY, ecb, None, |t: &Vec<u8>| {
+                hex::encode_upper(t)
+            });
+            assert_eq!(Crypto::eapi_res_decrypt(&cipher, false).unwrap(), plain);
+        }
+    }
 }

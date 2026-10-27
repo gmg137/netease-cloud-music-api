@@ -15,13 +15,15 @@ use regex::Regex;
 use std::{
     collections::HashMap,
     path::PathBuf,
-    sync::OnceLock,
+    sync::{Arc, OnceLock, RwLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use urlqstring::QueryParams;
 
 lazy_static! {
     static ref _CSRF: Regex = Regex::new(r"_csrf=(?P<csrf>[^(;|$)]+)").unwrap();
+    /// 易盾 v3 反作弊 token 的 JSONP 响应: null([200,<时间戳>,"<token>"])
+    static ref _CHECK_TOKEN: Regex = Regex::new(r#"null\(\[(\d+),\d+,"([^"]+)"\]\)"#).unwrap();
 }
 
 static BASE_URL: &str = "https://music.163.com";
@@ -33,6 +35,15 @@ const LINUX_USER_AGNET: &str =
 
 const XEAPI_USER_AGENT: &str =
     "NeteaseMusic/9.5.61.260802021928(9005061);Dalvik/2.1.0 (Linux; U; Android 12; HBN-AL00 Build/cd737a2.0)";
+
+/// 易盾 v3 反作弊 token 注册端点，每次请求实时获取，不缓存
+static DUN_V3_URL: &str = "https://ac.dun.163yun.com/v3/b?pn=YD00000558929251";
+
+/// 收藏歌单时随请求体下发的静态 checkToken
+static CHECK_TOKEN: &str = "9ca17ae2e6ffcda170e2e6ee8af14fbabdb988f225b3868eb2c15a879b9a83d274a790ac8ff54a97b889d5d42ad0feaec3b92af58cff99c470a7eafd88f75e839a9ea7c14e909da883e83fb692a3abdb6b92adee9e";
+
+/// eapi 请求携带反作弊 token 的头字段名
+static ANTI_CHEAT_HEADER: &str = "X-antiCheatToken";
 
 const USER_AGENT_LIST: [&str; 14] = [
     "Mozilla/5.0 (iPhone; CPU iPhone OS 9_1 like Mac OS X) AppleWebKit/601.1.46 (KHTML, like Gecko) Version/9.0 Mobile/13B143 Safari/601.1",
@@ -56,6 +67,8 @@ pub struct MusicApi {
     client: HttpClient,
     csrf: OnceLock<String>,
     xeapi_public_key: OnceLock<XeapiPublicKeyState>,
+    /// 外部注入的反作弊 token，被下一次 eapi 请求消费
+    anti_cheat_override: Arc<RwLock<Option<String>>>,
 }
 
 #[allow(unused)]
@@ -85,6 +98,7 @@ impl MusicApi {
             client,
             csrf: OnceLock::new(),
             xeapi_public_key: OnceLock::new(),
+            anti_cheat_override: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -101,6 +115,7 @@ impl MusicApi {
             client,
             csrf: OnceLock::new(),
             xeapi_public_key: OnceLock::new(),
+            anti_cheat_override: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -139,16 +154,64 @@ impl MusicApi {
         Ok(())
     }
 
-    fn get_music_u(&self) -> Option<String> {
+    /// 读取 cookie jar 中指定 cookie 的值
+    fn get_cookie(&self, name: &str) -> Option<String> {
         let cookies = self.cookie_jar()?;
         let uri = BASE_URL.parse().ok()?;
-        let cookie = cookies.get_by_name(&uri, "MUSIC_U")?;
-        let value = cookie.value();
+        let value = cookies.get_by_name(&uri, name)?.value().to_string();
         if value.is_empty() {
             None
         } else {
-            Some(value.to_string())
+            Some(value)
         }
+    }
+
+    fn get_music_u(&self) -> Option<String> {
+        self.get_cookie("MUSIC_U")
+    }
+
+    /// 注入一次性反作弊 token，仅对下一次 eapi 请求生效
+    /// token: 易盾 token，可在浏览器侧获取后传入
+    #[allow(unused)]
+    pub fn set_anti_cheat_token(&self, token: &str) {
+        if let Ok(mut slot) = self.anti_cheat_override.write() {
+            *slot = Some(token.to_string());
+        }
+    }
+
+    /// 获取易盾 v3 反作弊 token，优先使用外部注入值
+    async fn fetch_anti_cheat_token(&self) -> Option<String> {
+        let injected = self
+            .anti_cheat_override
+            .write()
+            .ok()
+            .and_then(|mut slot| slot.take());
+        if let Some(token) = injected {
+            return Some(token);
+        }
+        let body = self
+            .client
+            .get_async(DUN_V3_URL)
+            .await
+            .ok()?
+            .text()
+            .await
+            .ok()?;
+        parse_anti_cheat_token(&body)
+    }
+
+    /// eapi 请求的 Cookie 头，在基础 cookie 上补登录态与附加头
+    fn eapi_cookie(&self, extra_headers: &[(&str, &str)]) -> String {
+        let mut cookie = build_cookie(&CryptoApi::Eapi);
+        for name in ["MUSIC_U", "MUSIC_A"] {
+            if let Some(value) = self.get_cookie(name) {
+                cookie.push_str(&format!("; {}={}", name, value));
+            }
+        }
+        for (name, value) in extra_headers {
+            cookie.push_str(&format!("; {}={}", name, value));
+        }
+        cookie
     }
 
     /// 获取 xeapi 公钥
@@ -226,6 +289,24 @@ impl MusicApi {
         ua: &str,
         append_csrf: bool,
     ) -> Result<String> {
+        self.request_ext(method, path, params, cryptoapi, ua, append_csrf, &[])
+            .await
+    }
+
+    /// 发送请求，可向 eapi 加密体的 header 追加字段
+    /// extra_headers: 追加的字段名与值，同时写入 Cookie 头
+    // 参数与 request 保持一致，额外多一个头字段，拆分结构体不值得
+    #[allow(clippy::too_many_arguments)]
+    async fn request_ext(
+        &self,
+        method: Method,
+        path: &str,
+        params: HashMap<&str, &str>,
+        cryptoapi: CryptoApi,
+        ua: &str,
+        append_csrf: bool,
+        extra_headers: &[(&str, &str)],
+    ) -> Result<String> {
         let empty = String::new();
         let csrf = match self.csrf.get() {
             Some(str) => str.clone(),
@@ -286,23 +367,34 @@ impl MusicApi {
                         let buildver = &buildver[..buildver.len().min(10)];
                         let request_id = format!("{}_{:04}", now_ms, rand::random::<u16>() % 1000);
 
+                        let mut header = serde_json::json!({
+                            "osver": "16.2",
+                            "deviceId": "",
+                            "os": "iPhone OS",
+                            "appver": "9.0.90",
+                            "versioncode": "140",
+                            "mobilename": "",
+                            "buildver": buildver,
+                            "resolution": "1920x1080",
+                            "__csrf": csrf,
+                            "channel": "",
+                            "requestId": request_id,
+                        });
+
+                        // eapi 通过加密体内的 header 携带登录态与反作弊 token
+                        if let serde_json::Value::Object(ref mut map) = header {
+                            for name in ["MUSIC_U", "MUSIC_A"] {
+                                if let Some(value) = self.get_cookie(name) {
+                                    map.insert(name.to_string(), value.into());
+                                }
+                            }
+                            for (name, value) in extra_headers {
+                                map.insert((*name).to_string(), (*value).into());
+                            }
+                        }
+
                         if let serde_json::Value::Object(ref mut map) = data {
-                            map.insert(
-                                "header".to_string(),
-                                serde_json::json!({
-                                    "osver": "16.2",
-                                    "deviceId": "",
-                                    "os": "iPhone OS",
-                                    "appver": "9.0.90",
-                                    "versioncode": "140",
-                                    "mobilename": "",
-                                    "buildver": buildver,
-                                    "resolution": "1920x1080",
-                                    "__csrf": csrf,
-                                    "channel": "",
-                                    "requestId": request_id,
-                                }),
-                            );
+                            map.insert("header".to_string(), header);
                         }
 
                         Crypto::eapi(path, &data.to_string())
@@ -330,7 +422,10 @@ impl MusicApi {
                     CryptoApi::Xeapi => "interface3.music.163.com",
                     _ => "music.163.com",
                 };
-                let cookie = build_cookie(&cryptoapi);
+                let cookie = match cryptoapi {
+                    CryptoApi::Eapi => self.eapi_cookie(extra_headers),
+                    _ => build_cookie(&cryptoapi),
+                };
                 let request = Request::post(&url)
                     .header("Cookie", cookie)
                     .header("Accept", "*/*")
@@ -1142,15 +1237,33 @@ impl MusicApi {
     #[allow(unused)]
     pub async fn song_list_like(&self, like: bool, id: u64) -> bool {
         let path = if like {
-            "/weapi/playlist/subscribe"
+            "/api/playlist/subscribe"
         } else {
-            "/weapi/playlist/unsubscribe"
+            "/api/playlist/unsubscribe"
         };
         let mut params = HashMap::new();
         let id = id.to_string();
         params.insert("id", &id[..]);
+        // 收藏时需随请求体下发静态 checkToken，取消收藏则不带
+        if like {
+            params.insert("checkToken", CHECK_TOKEN);
+        }
+        // 易盾反作弊 token 每次实时获取，失败时不阻断请求
+        let token = self.fetch_anti_cheat_token().await;
+        let mut extra_headers = Vec::new();
+        if let Some(token) = token.as_deref() {
+            extra_headers.push((ANTI_CHEAT_HEADER, token));
+        }
         if let Ok(result) = self
-            .request(Method::Post, path, params, CryptoApi::Weapi, "", true)
+            .request_ext(
+                Method::Post,
+                path,
+                params,
+                CryptoApi::Eapi,
+                "",
+                true,
+                &extra_headers,
+            )
             .await
         {
             return to_msg(result)
@@ -1316,6 +1429,21 @@ impl MusicApi {
             .request(Method::Post, path, params, CryptoApi::Weapi, "", true)
             .await?;
         to_song_info(result, Parse::Intelligence)
+    }
+}
+
+/// 解析易盾 v3 接口返回的 JSONP，取出反作弊 token
+/// 正常响应形如: null([200,1793073626061,"s0qdf2yP98JEEVUEEQKIE2+b0CVOmrX2"])
+fn parse_anti_cheat_token(body: &str) -> Option<String> {
+    let caps = _CHECK_TOKEN.captures(body)?;
+    if caps.get(1)?.as_str() != "200" {
+        return None;
+    }
+    let token = caps.get(2)?.as_str();
+    if token.is_empty() {
+        None
+    } else {
+        Some(token.to_string())
     }
 }
 
@@ -1505,6 +1633,37 @@ mod tests {
     fn song_details_allow_an_empty_batch() {
         let songs = to_song_info(r#"{"code":200,"songs":[]}"#.into(), Parse::Usl).unwrap();
         assert!(songs.is_empty());
+    }
+
+    #[test]
+    fn anti_cheat_token_parses_dun_jsonp() {
+        assert_eq!(
+            parse_anti_cheat_token(r#"null([200,1793073626061,"s0qdf2yP98JEEVUEEQKIE2+b0CVOmrX2"])"#)
+                .as_deref(),
+            Some("s0qdf2yP98JEEVUEEQKIE2+b0CVOmrX2")
+        );
+        // 非 200 状态、空 token、非 JSONP 响应都不应产出 token
+        assert!(parse_anti_cheat_token(r#"null([500,0,""])"#).is_none());
+        assert!(parse_anti_cheat_token(r#"null([200,0,""])"#).is_none());
+        assert!(parse_anti_cheat_token("").is_none());
+    }
+
+    #[test]
+    fn playlist_subscribe_payload_carries_check_token() {
+        let mut params = HashMap::new();
+        params.insert("id", "106697785");
+        params.insert("checkToken", CHECK_TOKEN);
+        let data = serde_json::json!(params);
+        let encrypted = Crypto::eapi("/api/playlist/subscribe", &data.to_string());
+        // QueryParams::stringify 输出形如 params=<HEX>&，需去掉前后缀再解码
+        let hex = encrypted
+            .strip_prefix("params=")
+            .expect("eapi 输出应为 params=... 形式")
+            .trim_end_matches('&');
+        let (url, payload) = Crypto::eapi_req_decrypt(hex).unwrap();
+        assert_eq!(url, "/api/playlist/subscribe");
+        assert!(payload.contains(CHECK_TOKEN));
+        assert!(payload.contains(r#""id":"106697785""#));
     }
 
     #[async_std::test]
