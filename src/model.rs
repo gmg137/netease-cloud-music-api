@@ -889,7 +889,17 @@ pub fn to_login_info(json: String) -> Result<LoginInfo> {
         });
     }
 
-    let msg = get_val!(value, "msg")?;
+    // 不同接口的错误字段不一致（msg / message），-462 还会附带验证地址
+    let mut msg = value
+        .get("msg")
+        .and_then(|v| v.as_str())
+        .or_else(|| value.get("message").and_then(|v| v.as_str()))
+        .unwrap_or_default()
+        .to_string();
+    if let Some(url) = value.get("data").and_then(|d| d.get("url")).and_then(|v| v.as_str()) {
+        msg.push(' ');
+        msg.push_str(url);
+    }
     Ok(LoginInfo {
         code,
         uid: 0,
@@ -931,18 +941,43 @@ pub fn to_banners_info(json: String) -> Result<Vec<BannersInfo>> {
     Err(anyhow!("none"))
 }
 
+/// 把接口返回的错误码与文案拼成可直接展示的字符串
+pub fn api_error(value: &Value) -> String {
+    let code = value
+        .get("code")
+        .and_then(|v| v.as_i64())
+        .map(|c| c.to_string())
+        .unwrap_or_default();
+    let msg = value
+        .get("message")
+        .and_then(|v| v.as_str())
+        .or_else(|| value.get("msg").and_then(|v| v.as_str()))
+        .unwrap_or_default();
+    let url = value
+        .get("data")
+        .and_then(|d| d.get("url"))
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    match (code.is_empty(), msg.is_empty(), url.is_empty()) {
+        (false, false, false) => format!("{} {} {}", code, msg, url),
+        (false, false, true) => format!("{} {}", code, msg),
+        (false, true, _) => format!("error code {}", code),
+        _ => "unknown error".to_string(),
+    }
+}
+
 #[allow(unused)]
 pub fn to_captcha(json: String) -> Result<()> {
     let value = &serde_json::from_str::<Value>(&json)?;
-    let code: i32 = get_val!(value, "code")?;
+    let code: i32 = get_val!(value, "code").unwrap_or_default();
     if code.eq(&200) {
         return Ok(());
     }
-    let data: bool = get_val!(value, "data")?;
-    if data {
+    // 部分接口用 code=200 + data=true 表示成功
+    if value.get("data").and_then(|v| v.as_bool()).unwrap_or_default() {
         return Ok(());
     }
-    Err(anyhow!("get captcha err!"))
+    Err(anyhow!(api_error(value)))
 }
 
 #[allow(unused)]
@@ -1125,6 +1160,40 @@ impl fmt::Display for ClientType {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn to_captcha_surfaces_server_message() {
+        // 号码格式错误、发送过于频繁都要把服务端文案透传给调用方
+        let err = to_captcha(r#"{"code":400,"message":"手机号码不符合规范"}"#.to_string())
+            .unwrap_err()
+            .to_string();
+        assert_eq!(err, "400 手机号码不符合规范");
+
+        let err = to_captcha(r#"{"code":405,"message":"发送验证码间隔过短","data":false}"#.to_string())
+            .unwrap_err()
+            .to_string();
+        assert_eq!(err, "405 发送验证码间隔过短");
+
+        // code=200 + data=true 仍然算成功
+        assert!(to_captcha(r#"{"code":200,"data":true}"#.to_string()).is_ok());
+    }
+
+    #[test]
+    fn to_login_info_handles_risk_control_response() {
+        // -462 没有 msg 字段，但带 message 与 data.url，此前会直接报 key 'msg' not found
+        let json = r#"{"code":-462,"message":"请完成验证操作","data":{
+            "verifyUrl":"https://st.music.163.com/encrypt-pages",
+            "url":"https://st.music.163.com/encrypt-pages?verifyToken=abc"}}"#;
+        let info = to_login_info(json.to_string()).unwrap();
+        assert_eq!(info.code, -462);
+        assert!(info.msg.starts_with("请完成验证操作"));
+        assert!(info.msg.contains("verifyToken=abc"));
+
+        // 验证码错误
+        let info = to_login_info(r#"{"msg":"验证码错误","code":503}"#.to_string()).unwrap();
+        assert_eq!(info.code, 503);
+        assert_eq!(info.msg, "验证码错误");
+    }
 
     #[test]
     fn to_song_list_parses_special_type() {

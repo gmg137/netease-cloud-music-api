@@ -103,6 +103,21 @@ impl Crypto {
         }
     }
 
+    /// 解密原始密文响应体（穿戴端 eapi 直接返回二进制密文，不是 hex）
+    pub fn eapi_res_decrypt_body(body: &[u8]) -> Result<String> {
+        let decrypted = Crypto::aes_ecb_decrypt(&EAPIKEY, body)?;
+        if decrypted.len() >= 2 && decrypted[0] == 0x1f && decrypted[1] == 0x8b {
+            let mut decoder = GzDecoder::new(&decrypted[..]);
+            let mut result = String::new();
+            decoder
+                .read_to_string(&mut result)
+                .map_err(|_| anyhow!("gzip decompress failed"))?;
+            Ok(result)
+        } else {
+            String::from_utf8(decrypted).map_err(|_| anyhow!("utf8 decode failed"))
+        }
+    }
+
     pub fn eapi_req_decrypt(encrypted_params: &str) -> Result<(String, String)> {
         let encrypted_bytes =
             hex::decode(encrypted_params).map_err(|_| anyhow!("hex decode failed"))?;
