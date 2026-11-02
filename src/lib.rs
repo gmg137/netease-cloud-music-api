@@ -45,6 +45,16 @@ static CHECK_TOKEN: &str = "9ca17ae2e6ffcda170e2e6ee8af14fbabdb988f225b3868eb2c1
 /// eapi 请求携带反作弊 token 的头字段名
 static ANTI_CHEAT_HEADER: &str = "X-antiCheatToken";
 
+/// 穿戴端（手表）eapi 网关。网易对 PC 端登录接口（weapi）做了风控，
+/// 短信验证码登录会直接返回 -462「请完成验证操作」，而穿戴端网关不做该拦截。
+static WATCH_EAPI_HOST: &str = "https://interface3.music.163.com";
+static WATCH_USER_AGENT: &str =
+    "NeteaseMusic/2.9.105.1776866597(29105);Dalvik/2.1.0 (Linux; U; Android 13; Z9 Build/OPM1.171019.026)";
+static WATCH_MCONFIG: &str =
+    r#"{"IuRPVVmc3WWul9fT":{"version":"135168","appver":"2.9.105"}}"#;
+/// 穿戴端发送验证码必须携带的客户端密钥
+static WATCH_SECRET: &str = "music_middleuser_andrwarelogin";
+
 const USER_AGENT_LIST: [&str; 14] = [
     "Mozilla/5.0 (iPhone; CPU iPhone OS 9_1 like Mac OS X) AppleWebKit/601.1.46 (KHTML, like Gecko) Version/9.0 Mobile/13B143 Safari/601.1",
     "Mozilla/5.0 (iPhone; CPU iPhone OS 9_1 like Mac OS X) AppleWebKit/601.1.46 (KHTML, like Gecko) Version/9.0 Mobile/13B143 Safari/601.1",
@@ -69,6 +79,8 @@ pub struct MusicApi {
     xeapi_public_key: OnceLock<XeapiPublicKeyState>,
     /// 外部注入的反作弊 token，被下一次 eapi 请求消费
     anti_cheat_override: Arc<RwLock<Option<String>>>,
+    /// 穿戴端 eapi 的设备标识，需在会话内保持不变
+    watch_device_id: Arc<OnceLock<String>>,
 }
 
 #[allow(unused)]
@@ -99,6 +111,7 @@ impl MusicApi {
             csrf: OnceLock::new(),
             xeapi_public_key: OnceLock::new(),
             anti_cheat_override: Arc::new(RwLock::new(None)),
+            watch_device_id: Arc::new(OnceLock::new()),
         }
     }
 
@@ -116,6 +129,7 @@ impl MusicApi {
             csrf: OnceLock::new(),
             xeapi_public_key: OnceLock::new(),
             anti_cheat_override: Arc::new(RwLock::new(None)),
+            watch_device_id: Arc::new(OnceLock::new()),
         }
     }
 
@@ -554,6 +568,119 @@ impl MusicApi {
             .request(Method::Post, path, params, CryptoApi::Weapi, "", true)
             .await?;
         to_captcha(result)
+    }
+
+    /// 设置穿戴端设备标识。留空则首次使用时随机生成并固定，
+    /// 若需要在多次启动间保持一致，可自行持久化后回填。
+    pub fn set_watch_device_id(&self, device_id: &str) {
+        let _ = self.watch_device_id.set(device_id.to_string());
+    }
+
+    fn watch_device_id(&self) -> &str {
+        self.watch_device_id.get_or_init(|| {
+            format!("{:x}{:x}", rand::random::<u64>(), rand::random::<u64>())
+        })
+    }
+
+    /// 穿戴端设备的 Cookie，os=andrwear 为手表客户端的固定取值
+    fn watch_cookie(&self) -> String {
+        let device_id = self.watch_device_id().to_string();
+        let mut cookie = format!(
+            "osver=13; appver=2.9.105; versioncode=29105; mobilename=Z9; \
+             buildver=1776866597; resolution=360x320; brand=XTC; os=andrwear; \
+             channel=xtc-store; deviceId={}",
+            device_id
+        );
+        for name in ["MUSIC_U", "MUSIC_A", "__csrf"] {
+            if let Some(value) = self.get_cookie(name) {
+                cookie.push_str(&format!("; {}={}", name, value));
+            }
+        }
+        cookie
+    }
+
+    /// 穿戴端 eapi 请求
+    /// path: 未加 eapi 前缀的原始路径，如 /api/login/cellphone
+    async fn watch_request(&self, path: &str, params: HashMap<&str, &str>) -> Result<String> {
+        let device_id = self.watch_device_id().to_string();
+        // 穿戴端把登录态和设备信息放在加密体的 header 对象里，
+        // 且需要 e_r=true
+        let mut header = serde_json::json!({
+            "osver": "13",
+            "appver": "2.9.105",
+            "versioncode": "29105",
+            "mobilename": "Z9",
+            "distributeChannel": r#"andrwear${"channel":"xtc-store"}"#,
+            "buildver": "1776866597",
+            "resolution": "360x320",
+            "brand": "XTC",
+            "os": "andrwear",
+            "channel": "xtc-store",
+            "deviceId": device_id,
+            "requestId": "",
+        });
+        if let serde_json::Value::Object(ref mut map) = header {
+            for name in ["MUSIC_U", "MUSIC_A", "__csrf"] {
+                if let Some(value) = self.get_cookie(name) {
+                    map.insert(name.to_string(), value.into());
+                }
+            }
+        }
+        let mut data = serde_json::Map::new();
+        for (key, value) in params {
+            data.insert(key.to_string(), value.into());
+        }
+        data.insert("header".to_string(), header);
+        data.insert("e_r".to_string(), "true".into());
+        let body = Crypto::eapi(path, &serde_json::Value::Object(data).to_string());
+
+        let url = format!("{}{}", WATCH_EAPI_HOST, path.replacen("/api", "/eapi", 1));
+        let request = Request::post(&url)
+            .header("User-Agent", WATCH_USER_AGENT)
+            .header("cmpageid", "WatchMergePlayerActivity")
+            .header("mconfig-info", WATCH_MCONFIG)
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .header("Accept-Encoding", "gzip")
+            .header("Cookie", self.watch_cookie())
+            .body(body)
+            .map_err(|_| anyhow!("none"))?;
+        let mut response = self
+            .client
+            .send_async(request)
+            .await
+            .map_err(|_| anyhow!("none"))?;
+        let bytes = response.bytes().await.map_err(|_| anyhow!("none"))?;
+        // 穿戴端响应体是原始密文（非 hex），与其他 eapi 接口不同
+        Crypto::eapi_res_decrypt_body(&bytes)
+    }
+
+    /// 穿戴端获取验证码
+    /// PC 端接口在账号/网络触发风控时会返回 -462，穿戴端不做该拦截
+    pub async fn captcha_wearable(&self, ctcode: String, phone: String) -> Result<()> {
+        let path = "/api/sms/captcha/sent";
+        let mut params = HashMap::new();
+        params.insert("cellphone", &phone[..]);
+        params.insert("ctcode", &ctcode[..]);
+        params.insert("secrete", WATCH_SECRET);
+        let result = self.watch_request(path, params).await?;
+        to_captcha(result)
+    }
+
+    /// 穿戴端手机号验证码登录
+    /// 成功后登录态（MUSIC_U）写入 cookie jar
+    pub async fn login_cellphone_wearable(
+        &self,
+        ctcode: String,
+        phone: String,
+        captcha: String,
+    ) -> Result<LoginInfo> {
+        let path = "/api/login/cellphone";
+        let mut params = HashMap::new();
+        params.insert("phone", &phone[..]);
+        params.insert("countrycode", &ctcode[..]);
+        params.insert("captcha", &captcha[..]);
+        let result = self.watch_request(path, params).await?;
+        to_login_info(result)
     }
 
     /// 创建登陆二维码链接
