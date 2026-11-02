@@ -971,6 +971,16 @@ pub fn to_captcha(json: String) -> Result<()> {
     let value = &serde_json::from_str::<Value>(&json)?;
     let code: i32 = get_val!(value, "code").unwrap_or_default();
     if code.eq(&200) {
+        // 少数情况下服务端返回 code=200 但 data=false（并未真正发出），
+        // 需要按失败处理，否则界面会误报「验证码已发送」
+        if let Some(false) = value.get("data").and_then(|v| v.as_bool()) {
+            let msg = api_error(value);
+            return Err(anyhow!(if msg.starts_with("error code") {
+                "发送验证码失败".to_string()
+            } else {
+                msg
+            }));
+        }
         return Ok(());
     }
     // 部分接口用 code=200 + data=true 表示成功
@@ -1176,6 +1186,8 @@ mod tests {
 
         // code=200 + data=true 仍然算成功
         assert!(to_captcha(r#"{"code":200,"data":true}"#.to_string()).is_ok());
+        // code=200 但 data=false 视为失败，避免误报「已发送」
+        assert!(to_captcha(r#"{"code":200,"data":false}"#.to_string()).is_err());
     }
 
     #[test]
