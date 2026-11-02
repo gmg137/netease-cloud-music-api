@@ -651,7 +651,11 @@ impl MusicApi {
             .map_err(|_| anyhow!("none"))?;
         let bytes = response.bytes().await.map_err(|_| anyhow!("none"))?;
         // 穿戴端响应体是原始密文（非 hex），与其他 eapi 接口不同
-        Crypto::eapi_res_decrypt_body(&bytes)
+        let text = Crypto::eapi_res_decrypt_body(&bytes)?;
+        if std::env::var_os("NCM_DEBUG_BODY").is_some() {
+            eprintln!("[ncm] WATCH POST {} -> {}", path, text);
+        }
+        Ok(text)
     }
 
     /// 穿戴端获取验证码
